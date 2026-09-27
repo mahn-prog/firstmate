@@ -230,6 +230,61 @@ test_an_owner_that_dies_during_startup_ends_the_command() {
   pass "fm_exec_timed ends the command when its owner dies during watchdog startup"
 }
 
+# Regression test for the bash 3.2 BASHPID crash upstream #5917 introduced:
+# fm_exec_timed compared against a bare $BASHPID, which set -u treats as an
+# unbound-variable error under macOS's shipped /bin/bash 3.2 (which has no
+# BASHPID at all), so every timed call aborted with "BASHPID: unbound
+# variable" before running anything - the exact failure that kept
+# bin/fm-spawn.sh from moving a backlog item to In flight. This proves the
+# call still runs, and still passes the command's status and output through,
+# under real bash 3.2 with set -u.
+test_fm_exec_timed_runs_under_real_bash_3_2_with_set_u() {
+  local out rc=0
+  out=$(PATH="$PERL_ONLY:$PATH" /bin/bash -c '
+    set -u
+    . "$1/bin/fm-timeout-lib.sh"
+    fm_exec_timed 5 1 bash -c "echo to-stdout; echo to-stderr >&2; exit 7"
+  ' _ "$ROOT" 2>&1) || rc=$?
+  [ "$rc" -eq 7 ] || fail "fm_exec_timed did not run the command under real bash 3.2 with set -u (rc=$rc): $out"
+  assert_contains "$out" "to-stdout" "fm_exec_timed lost the command's stdout under real bash 3.2 with set -u"
+  assert_not_contains "$out" "unbound variable" "fm_exec_timed aborted on an unbound variable reference under real bash 3.2 with set -u"
+  pass "fm_exec_timed runs a command and passes its status through under real bash 3.2 with set -u"
+}
+
+# The same owner-death-during-startup scenario as
+# test_an_owner_that_dies_during_startup_ends_the_command, forced onto real
+# bash 3.2 (no BASHPID at all, so the fallback pid capture is what has to
+# identify the caller). Proves the owner-pid semantics survive the fix: a
+# caller whose owner already died before the watchdog started is still
+# detected, and its bounded command still ends, instead of running out to the
+# 60s bound.
+test_fm_exec_timed_owner_semantics_hold_under_real_bash_3_2() {
+  local dir watchdog started
+  dir="$TMP_ROOT/bash32-owner"
+  mkdir -p "$dir"
+  PATH="$PERL_ONLY:$PATH" /bin/bash -c '
+    set -u
+    . "$1/bin/fm-timeout-lib.sh"
+    (
+      while kill -0 "$$" 2>/dev/null; do sleep 0.05; done
+      fm_exec_timed 60 1 bash -c "exec sleep 300"
+    ) >/dev/null 2>&1 &
+    echo "$!" > "$2/watchdog"
+    exit 0
+  ' _ "$ROOT" "$dir"
+  wait_for_file "$dir/watchdog"
+  watchdog=$(cat "$dir/watchdog")
+  started=$SECONDS
+  while kill -0 "$watchdog" 2>/dev/null; do
+    if [ "$((SECONDS - started))" -ge 15 ]; then
+      kill -KILL "$watchdog" 2>/dev/null || true
+      fail "a watchdog whose owner died during startup ran on toward its bound under real bash 3.2"
+    fi
+    sleep 0.02
+  done
+  pass "fm_exec_timed ends the command when its owner dies during watchdog startup, under real bash 3.2 with set -u"
+}
+
 # perl is preferred whenever it exists, because only its watchdog can reap a
 # leftover descendant after replacing the caller.
 test_perl_is_preferred_over_timeout() {
@@ -337,6 +392,8 @@ test_a_descendant_holding_the_output_cannot_outlast_the_bound
 test_a_signal_to_the_bounding_process_reaches_the_command
 test_a_named_owner_that_is_gone_ends_the_command
 test_an_owner_that_dies_during_startup_ends_the_command
+test_fm_exec_timed_runs_under_real_bash_3_2_with_set_u
+test_fm_exec_timed_owner_semantics_hold_under_real_bash_3_2
 test_perl_is_preferred_over_timeout
 test_refuses_rather_than_running_unbounded
 test_rejects_malformed_bounds_before_running_anything
