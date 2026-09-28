@@ -221,6 +221,8 @@ fm_exec_timed() {  # <seconds> <grace-seconds> <command...>
     exit 125
   fi
   owner=${FM_EXEC_TIMED_OWNER_PID:-$$}
+  # Bash 3.2 has no BASHPID (a bare reference aborts under set -u); exec a
+  # child shell there so its PPID identifies this frame, unlike $$.
   self=${BASHPID:-$(exec sh -c 'printf "%s\n" "$PPID"')}
   [ "$owner" != "$self" ] || owner=$PPID
   unset FM_EXEC_TIMED_OWNER_PID
