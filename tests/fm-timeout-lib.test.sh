@@ -156,6 +156,7 @@ test_a_signal_to_the_bounding_process_reaches_the_command() {
   # shellcheck disable=SC2016
   (
     . "$ROOT/bin/fm-timeout-lib.sh"
+    # shellcheck disable=SC2030 # The perl-only PATH is intentionally subshell-local.
     PATH=$PERL_ONLY
     fm_exec_timed 60 30 bash -c '
       trap "echo forwarded > \"\$2\"; exit 3" TERM
@@ -240,6 +241,7 @@ test_an_owner_that_dies_during_startup_ends_the_command() {
 # under real bash 3.2 with set -u.
 test_fm_exec_timed_runs_under_real_bash_3_2_with_set_u() {
   local out rc=0
+  # shellcheck disable=SC2031 # The caller's PATH, not the subshell-local one in the signal test.
   out=$(PATH="$PERL_ONLY:$PATH" /bin/bash -c '
     set -u
     . "$1/bin/fm-timeout-lib.sh"
@@ -262,6 +264,7 @@ test_fm_exec_timed_owner_semantics_hold_under_real_bash_3_2() {
   local dir watchdog started
   dir="$TMP_ROOT/bash32-owner"
   mkdir -p "$dir"
+  # shellcheck disable=SC2031 # The caller's PATH, not the subshell-local one in the signal test.
   PATH="$PERL_ONLY:$PATH" /bin/bash -c '
     set -u
     . "$1/bin/fm-timeout-lib.sh"
