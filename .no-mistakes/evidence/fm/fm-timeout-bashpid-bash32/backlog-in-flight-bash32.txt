@@ -1,0 +1,30 @@
+## host shell: GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)
+
+## BASE d88512e (pre-fix): move probe-a to In flight with FM_TASKS_AXI_TIMEOUT=30
+fm_backlog_start rc=1 error=/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-base.X3DZW1/bin/fm-timeout-lib.sh: line 224: BASHPID: unbound variable
+exit=1
+
+## backlog after BASE attempt
+count: 2
+tasks[2]{id,state,kind,repo,title}:
+  probe-a,queued,task,"-",Regression probe A
+  probe-b,queued,task,"-",Regression probe B
+
+## TARGET fca9ff0 (fix): move probe-a to In flight with FM_TASKS_AXI_TIMEOUT=30
+fm_backlog_start rc=0 error=<none>
+exit=0
+
+## backlog after TARGET attempt
+count: 2
+tasks[2]{id,state,kind,repo,title}:
+  probe-a,in_flight,task,"-",Regression probe A
+  probe-b,queued,task,"-",Regression probe B
+
+## backlog.md
+# Backlog
+
+## In flight
+- [ ] probe-a - Regression probe A (since 2026-09-27)
+## Queued
+- [ ] probe-b - Regression probe B (since 2026-09-27)
+## Done

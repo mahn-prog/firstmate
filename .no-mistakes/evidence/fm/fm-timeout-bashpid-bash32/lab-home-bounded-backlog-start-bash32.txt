@@ -1,0 +1,28 @@
+lab home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.SE0hNH (bash 3.2.57(1)-release)
+--- lib: BASE d88512e ---
+fm_backlog_start: FAILED rc=1 error=/Users/matteo/.no-mistakes/worktrees/b54cd17402fa/01M3JN24AAD9A7TNNSGEMQZJA1/bin/fm-timeout-lib.sh: line 224: BASHPID: unbound variable
+backlog after:
+# Backlog
+
+## In flight
+
+## Queued
+- [ ] lab-item-1 - lab item (kind: ship) (since 2026-09-27)
+
+## Done
+--- lib: HEAD b3bdd80 ---
+fm_backlog_start: ok
+backlog after:
+# Backlog
+
+## In flight
+- [ ] lab-item-1 - lab item (kind: ship) (since 2026-09-27)
+
+## Queued
+## Done
+--- adversarial: bound still enforced under bash 3.2 set -u (HEAD) ---
+sleep 30 under a 2s bound: rc=124 elapsed=2s
+fm_timed_out: yes
+--- subshell caller still hands off owner (HEAD) ---
+child-ran
+rc=3

@@ -1,0 +1,19 @@
+## A. bound enforced under /bin/bash 3.2 set -u: fm_exec_timed 2 1 sleep 30 (caller = top-level shell)
+rc=124 elapsed=2s (expect rc=124, ~2s)
+
+## B. TERM-ignoring command killed after grace under bash 3.2
+rc=124 elapsed=4s (expect timed-out status, ~3s)
+
+## C. owner resolution trace (xtrace of the real fm_exec_timed) — top-level caller vs subshell caller
+top-level $$=17183 PPID=15669
++ owner=17183
++ self=17183
++ owner=15669
+outer $$=17251
+subshell-pid=17265
++ owner=17251
++ self=17265
+
+## D. owner dies while command runs (top-level caller, bash 3.2): command must end well before its 60s bound
+watchdog 17318 ended 0s after the owner exited
+no leftover sleep 300

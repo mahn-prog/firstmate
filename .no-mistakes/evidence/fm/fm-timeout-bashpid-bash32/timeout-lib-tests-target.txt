@@ -1,0 +1,13 @@
+## tests/fm-timeout-lib.test.sh on TARGET fca9ff0 (host bash: GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25))
+ok - fm_exec_timed passes a command's status and output through unchanged
+_: line 3: 81256 Terminated: 15          "$@"
+ok - fm_run_timed reports 124 when the bound TERMs a read whose wrapper recorded 143
+ok - fm_run_timed passes a natural exit through when the bound fired after completion
+/Users/matteo/.no-mistakes/worktrees/b54cd17402fa/01M3JN24AAD9A7TNNSGEMQZJA1/bin/fm-timeout-lib.sh: line 224: exec: sh: not found
+ok - fm_exec_timed sends TERM at the bound and a cooperative command ends there
+/Users/matteo/.no-mistakes/worktrees/b54cd17402fa/01M3JN24AAD9A7TNNSGEMQZJA1/bin/fm-timeout-lib.sh: line 224: exec: sh: not found
+ok - fm_exec_timed kills a TERM-ignoring command once the grace has passed
+tests/fm-timeout-lib.test.sh: line 112: BASHPID: unbound variable
+not ok - the bounded probe failed under PATH=/Applications/SnowflakeCLI.app/Contents/MacOS/:/Applications/SnowflakeCLI.app/Contents/MacOS/:/Users/matteo/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Applications/Privileges.app/Contents/MacOS:/opt/homebrew/bin:/Users/matteo/.local/bin:/Users/matteo/go/bin:/Users/matteo/.cargo/bin:/Users/matteo/bin:/opt/homebrew/sbin:/usr/local/sbin:/Users/matteo/.claude/plugins/cache/openai-codex/codex/1.0.4/bin:/Users/matteo/.claude/plugins/cache/claude-plugins-official/vercel/0.50.0/bin:/Users/matteo/.claude/plugins/cache/claude-plugins-official/atlassian/eb9a5956a7ac/bin:/Users/matteo/.claude/plugins/cache/attentive-marketplace/slack/1.0.0/bin:/Users/matteo/.claude/plugins/cache/attentive-marketplace/google-workspace/1.0.0/bin:/Users/matteo/.claude/plugins/cache/attentive-marketplace/spec-flow/0.5.0/bin
+bash tests/fm-timeout-lib.test.sh  0.14s user 0.22s system 5% cpu 6.495 total
+exit=1

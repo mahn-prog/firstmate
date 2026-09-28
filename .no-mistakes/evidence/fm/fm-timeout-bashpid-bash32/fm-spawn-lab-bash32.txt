@@ -1,0 +1,29 @@
+## Real bin/fm-spawn.sh under /bin/bash 3.2 in a disposable lab home (FM_HOME=<lab>, private fm-lab tmux socket), target fca9ff0
+bash-3.2$ clear; bin/fm-spawn.sh probe-b <lab>/projects/demo --mode local-only --yolo off --harness claude; echo SPAWN4_EXIT=$?
+fm-gate-refuse: gate agent lifecycle permitted only against lab home <lab>
+notice: probe-b ships mode=local-only while the standing posture for demo is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you
+can state
+spawned probe-b harness=claude kind=ship mode=local-only yolo=off window=primary:fm-probe-b worktree=/Users/matteo/.treehouse/demo-26c7b7/1/demo
+SPAWN4_EXIT=0
+bash-3.2$
+
+## backlog after spawn (fm-tasks-axi.sh list)
+count: 2
+tasks[2]{id,state,kind,repo,title}:
+  probe-b,in_flight,task,"-",Regression probe B
+  probe-a,in_flight,task,"-",Regression probe A
+
+## <lab>/data/backlog.md
+# Backlog
+
+## In flight
+- [ ] probe-b - Regression probe B (since 2026-09-27)
+- [ ] probe-a - Regression probe A (since 2026-09-27)
+## Queued
+## Done
+
+## task record
+probe-b.busy-gen
+probe-b.busy-state
+probe-b.git-hooks
+probe-b.meta

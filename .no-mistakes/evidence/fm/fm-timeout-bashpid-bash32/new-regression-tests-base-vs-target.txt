@@ -1,0 +1,9 @@
+## new regression tests only, against base lib (bin/fm-timeout-lib.sh from d88512e), host bash 3.2.57(1)-release
+not ok - fm_exec_timed did not run the command under real bash 3.2 with set -u (rc=127): /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-iso.VwYXQo/base/bin/fm-timeout-lib.sh: line 224: BASHPID: unbound variable
+exit=1
+
+## new regression tests only, against target lib (bin/fm-timeout-lib.sh from fca9ff0), host bash 3.2.57(1)-release
+ok - fm_exec_timed runs a command and passes its status through under real bash 3.2 with set -u
+ok - fm_exec_timed ends the command when its owner dies during watchdog startup, under real bash 3.2 with set -u
+exit=0
+

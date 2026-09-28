@@ -1,0 +1,9 @@
+=== BASE lib (d88512e bin/fm-timeout-lib.sh), /bin/bash 3.2.57(1)-release ===
+not ok - spawn failed: warning: /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-backlog-atomicity.R4F7Ne/dispatch-ok/home/data/atomic-dispatch-b1/launch-brief.md records no ship branch; defaulting to legacy branch fm/atomic-dispatch-b1
+error: task atomic-dispatch-b1's backlog item could not be moved to In flight (/Users/matteo/.no-mistakes/worktrees/b54cd17402fa/01M3JN24AAD9A7TNNSGEMQZJA1/bin/fm-timeout-lib.sh: line 224: BASHPID: unbound variable); its record was removed so no worker is left that the backlog does not own - close out endpoint firstmate:fm-atomic-dispatch-b1 and local copy /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-backlog-atomicity.R4F7Ne/dispatch-ok/wt by hand, then re-run the spawn
+rc=1
+
+=== HEAD lib (b3bdd80) ===
+ok - dispatch publishes the record and moves the backlog item In flight in one run
+ok - a home with no backlog remains exempt from lifecycle transitions
+rc=0
