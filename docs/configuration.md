@@ -660,6 +660,17 @@ Only the file's presence is read, so its contents are ignored; remove it to retu
 
 The skill text owns the marker spelling, the tick order, and the reinforcement rule.
 
+## Captain question cap (config/captain-question-cap)
+
+`config/captain-question-cap` is an optional local, gitignored file holding the most captain calls this home lets stay open at once.
+It holds one positive base-10 integer on one line in a regular file; a malformed value is refused rather than treated as a default.
+Without it there is no cap, and `bin/fm-captain-questions.sh` only reports the count.
+The captain chooses the value; firstmate records the number he gives and never picks one on his behalf.
+The file is per home and is not inherited by secondmate homes, because the main home's count already includes every registered secondmate's calls.
+The cap never delays a per-operation approval the organization's policy reserves (toll-free and Mindbody filings, Salesforce record writes, carrier appeals, number assignment and replacement, first arming of a lane), and nothing it counts is ever accepted by silence or treated as a two-way door.
+Product decisions and client-facing wording stay with the captain, and the cap changes no organization policy, Security Guardrail, or review gate.
+[`captain-hold-lifecycle`](../.agents/skills/captain-hold-lifecycle/SKILL.md) owns what the cap means and which calls it never delays, and the counter's header owns what it counts.
+
 ## Secondmate routes (data/secondmates.md)
 
 Persistent secondmate routes live locally in `data/secondmates.md`.
