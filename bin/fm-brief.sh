@@ -82,6 +82,11 @@
 # infrastructure every lane shares - the no-mistakes daemon and the worktree pool
 # their own slot came from - so ship and scout cannot drift apart. A secondmate
 # charter omits it: that home allocates and returns slots for its own crewmates.
+# Both crewmate scaffolds likewise render one shared question filter inside rule
+# 6: the checks a worker applies before raising any question (read it, cite what
+# is already decided, decide and record a two-way door, shape a one-way door with
+# a safe "if unanswered" default) and the hard limits no check relaxes. A
+# secondmate charter omits it too: that home follows captain-hold-lifecycle.
 # --mode, --forge, and --shape are refused on scout and secondmate scaffolds: a
 # scout's deliverable is a report rather than a merge, and a charter is not a
 # delivery contract.
@@ -535,6 +540,23 @@ IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
 EOF
 SHARED_INFRA_RULE=${SHARED_INFRA_RULE%$'\n'}
 
+# One shared string keeps the ship and scout question filter identical inside
+# rule 6. It is the single owner of the checks a crewmate applies before raising
+# any question; captain-hold-lifecycle points firstmate at this same text.
+IFS= read -r -d '' QUESTION_FILTER_RULE <<'EOF' || true
+   Before you raise any question - a `needs-decision` line, a question in your report or PR, or a question a skill you run would put to "the user" - apply these checks in order and raise it only if it reaches the last one:
+   a. Readable: if the answer can be read (code, docs, logs, records, this brief, an earlier answer), read it and do not ask.
+   b. Already decided: if a recorded decision, a requirement entry, a captain ruling, a principle the captain has ratified, or the organization's policy answers it, cite that and close it.
+   c. Two-way door: if it is cheap to reverse, invisible to operators and clients, off every external-write and money path, and within what this brief already leaves to you, decide it yourself and record one line under a "Decisions taken" heading in your report or PR: what you chose, what wrong would look like, and how to reverse it.
+   d. One-way door: otherwise raise it once, with the options, your recommended default, the date it is needed by, and an "if unanswered, we do X" line where X is the safe holding choice (keep the current state, do not send, keep waiting), never the irreversible action.
+   When more than three related questions about one process survive, group them under that process instead of listing them one by one, so firstmate can put them to the captain as one describe-the-process page.
+   Hard limits no check above relaxes: a per-operation approval the organization's policy reserves (toll-free and Mindbody filings, Salesforce record writes, carrier appeals, number assignment and replacement, first arming of a lane) is never a two-way door, never yours to decide, and never taken as approved by silence or by an "if unanswered" line.
+   Product decisions, client-facing wording, and anything the organization's policy reserves for a human stay with the captain and are never two-way doors; this filter changes no organization policy, Security Guardrail, or review gate.
+   Findings from a no-mistakes ask-user gate are not filtered or decided by you: route them exactly as the gate rule says.
+   If this brief's `## Captain's intent` explicitly asks to see every question for this task, that instruction wins over this filter.
+EOF
+QUESTION_FILTER_RULE=${QUESTION_FILTER_RULE%$'\n'}
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
@@ -572,6 +594,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+$QUESTION_FILTER_RULE
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
@@ -649,6 +672,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+$QUESTION_FILTER_RULE
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.

@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before holding any new captain call, before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -18,7 +18,17 @@ The agent performs the semantic inventory because scripts must not infer captain
 
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
 Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
-Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+Before holding, put every question through the question filter that rule 6 of each crewmate brief carries (`bin/fm-brief.sh` owns its text): read what can be read, cite and close what an existing rule or ruling answers, leave a two-way door to whoever may already decide it and list it in your next batched captain update, and hold only a one-way door shaped with options, a recommended default, a needed-by date, and an "if unanswered, we do X" line whose X is the safe holding choice, never the irreversible action.
+Keep one held task per captain action: one one-way-door ruling together with the sub-questions that ruling settles, or one describe-the-process page; when one work item waits on several rulings, hold it for one and create a captain task for each other with `--origin` naming it.
+When more than three related questions about one process survive the filter, the describe-the-process page is the default route: the captain describes how the process should run end to end, the answers derived from his description come back for one confirmation, and only conflicts and genuinely open items return as rulings of their own.
+An explicit captain instruction to see every question for a piece of work wins over the filter for that work.
+Relay the "Decisions taken" lines workers record in their reports and PRs in that same batched captain update, so he can reverse any of them.
+Put the question and its options in the hold reason, and represent each held task with exactly one board card; never fan one task id into duplicate same-key cards.
+`bin/fm-captain-questions.sh` counts the calls open across this home and every registered secondmate home against the cap the captain set in `config/captain-question-cap`, and only reports when he has set none.
+The cap lives in the main home only: a secondmate home's calls count toward it there, while a secondmate home has no cap file of its own and holds as before.
+Run it before holding a new call; at or above the cap, keep the new one-way door out of the live Captain's Call: merge it into an open call it belongs with, downgrade it if it is really a two-way door, or hold it with `--until` a date one week out so it is carried for the completion gate but parked.
+The cap never delays a per-operation approval the organization's policy reserves, a destructive, irreversible, or security-sensitive choice, a dated deadline, a failing check, or an open incident: hold those anyway, and they count.
+Nothing the captain owns is accepted by silence, a default, an "if unanswered" line, or a batch: per-operation approvals the organization's policy reserves (toll-free and Mindbody filings, Salesforce record writes, carrier appeals, number assignment and replacement, first arming of a lane) are never two-way doors and always need his explicit words, product decisions and client-facing wording stay with him, and this policy changes no organization policy, Security Guardrail, or review gate.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 After inventorying the whole report and review surface, run `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
@@ -30,7 +40,7 @@ Only `answer` with the captain's words or an evidence-backed `reconcile close` m
 Never close anything the captain owns without recording what he actually said: `bin/fm-captain-hold.sh answer` writes his exact words into the task and closes a question-shaped call, while `--release` frees a captain-gated work item to proceed.
 A merge approval uses that existing release path because approval permits the merge to proceed; cleanup closes the work only after it lands and records what shipped.
 Closing a held row at merge approval instead records completion before landing, so the backlog claims completion before the work actually ships.
-When the answer changes what a task must build, follow `AGENTS.md` section 7's mid-task ask rule to preserve the captain's words in the brief and steer the worker.
+When the answer changes what a task must build, follow `AGENTS.md` section 7's mid-task ask rule to preserve the captain's words in the brief and steer the worker, and have that task land the ruling as three artefacts in one change: its decision record where the project keeps one, the requirement or doc it changes, and the test's expected value where code is involved.
 When the captain says "later", that is an answer too: re-hold with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
 "A keyed answer resolves its matching captain-held task" is one capability with one owner, `bin/fm-captain-hold.sh answers`, and every channel that carries a captain answer feeds it the same task id and answer; a channel never maps keys to tasks, records a decision, or resolves anything itself.
 Chat already feeds it through `bin/fm-send.sh --resolve-key`, and a captured-answer source feeds it once bound with `bin/fm-captain-hold.sh bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.
@@ -57,8 +67,8 @@ The absence of a routed work item is not a divergence and the guard never requir
 ## Operating sequence
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
-2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options.
+2. Put every question the review surfaces through the question filter, inventory only the one-way doors left, and find the task each one gates.
+3. Check the open count with `bin/fm-captain-questions.sh`, then hold one task per captain action - the gated task, a new captain task, or one describe-the-process page - with a concise reason carrying the question, options, recommended default, needed-by date, and safe "if unanswered" line.
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Close each call only through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, record a still-active reconciliation through `reconcile note`, use `--until` when the captain defers it, or confirm a channel already closed it.

@@ -1325,6 +1325,69 @@ test_crewmate_scaffolds_forbid_pool_administration() {
   pass "fm-brief.sh: every crewmate scaffold forbids administering the shared worktree pool"
 }
 
+# Every question a crewmate raises passes the same four checks inside rule 6,
+# rendered from one shared string so ship and scout cannot drift apart, and the
+# hard limits travel with the filter itself.
+test_crewmate_scaffolds_filter_questions_before_raising() {
+  local home id brief mode filter_line rule6_line rule7_line ship_filter scout_filter
+  home="$TMP_ROOT/question-filter-home"
+  mkdir -p "$home/data"
+
+  for mode in no-mistakes direct-PR local-only scout; do
+    id="brief-questions-$mode"
+    if [ "$mode" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --scout >/dev/null 2>&1 \
+        || fail "fm-brief.sh --scout exited non-zero"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode "$mode" >/dev/null 2>&1 \
+        || fail "fm-brief.sh --mode $mode exited non-zero"
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_grep 'Before you raise any question' "$brief" "$mode brief did not carry the question filter"
+    assert_grep 'a question a skill you run would put to "the user"' "$brief" \
+      "$mode brief did not apply the filter to questions an unattended skill would ask"
+    assert_grep 'a. Readable:' "$brief" "$mode brief lost the read-it-first check"
+    assert_grep 'b. Already decided:' "$brief" "$mode brief lost the cite-and-close check"
+    assert_grep 'c. Two-way door:' "$brief" "$mode brief lost the two-way-door check"
+    assert_grep 'within what this brief already leaves to you' "$brief" \
+      "$mode brief let a two-way door reach past the worker's own authority"
+    assert_grep '"Decisions taken"' "$brief" "$mode brief gave two-way decisions no record"
+    assert_grep 'd. One-way door:' "$brief" "$mode brief lost the one-way-door shape"
+    assert_grep 'never the irreversible action' "$brief" \
+      "$mode brief let an unanswered question default to the irreversible action"
+    assert_grep 'describe-the-process page' "$brief" "$mode brief did not route related questions to one page"
+    assert_grep 'toll-free and Mindbody filings, Salesforce record writes, carrier appeals, number assignment and replacement, first arming of a lane' "$brief" \
+      "$mode brief did not name the per-operation approvals the filter never relaxes"
+    assert_grep 'never taken as approved by silence' "$brief" "$mode brief allowed approval by silence"
+    assert_grep 'client-facing wording' "$brief" "$mode brief did not keep client-facing wording with the captain"
+    assert_grep 'no-mistakes ask-user gate are not filtered or decided by you' "$brief" \
+      "$mode brief let the filter swallow ask-user gate findings"
+    filter_line=$(grep -n 'Before you raise any question' "$brief" | head -n 1 | cut -d: -f1)
+    rule6_line=$(grep -n '^6\. ' "$brief" | head -n 1 | cut -d: -f1)
+    rule7_line=$(grep -n '^7\. ' "$brief" | head -n 1 | cut -d: -f1)
+    [ -n "$filter_line" ] && [ -n "$rule6_line" ] && [ -n "$rule7_line" ] \
+      && [ "$filter_line" -gt "$rule6_line" ] && [ "$filter_line" -lt "$rule7_line" ] \
+      || fail "$mode brief must render the question filter inside rule 6"
+  done
+
+  # One shared string, not two copies.
+  ship_filter=$(awk '/Before you raise any question/,/explicitly asks to see every question/' \
+    "$home/data/brief-questions-no-mistakes/brief.md")
+  scout_filter=$(awk '/Before you raise any question/,/explicitly asks to see every question/' \
+    "$home/data/brief-questions-scout/brief.md")
+  [ -n "$ship_filter" ] || fail "ship brief emitted no question filter to compare"
+  [ "$ship_filter" = "$scout_filter" ] || fail "ship and scout question filters have drifted apart"
+
+  # A secondmate is a firstmate and follows captain-hold-lifecycle instead.
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-questions-mate --secondmate alpha >/dev/null 2>&1 \
+    || fail "fm-brief.sh --secondmate exited non-zero"
+  assert_no_grep 'Before you raise any question' "$home/data/brief-questions-mate/brief.md" \
+    "secondmate charter must not inherit the crewmate question filter"
+
+  pass "fm-brief.sh: every crewmate scaffold filters a question before raising it, inside rule 6"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -1359,3 +1422,4 @@ test_branch_prefix_is_refused_where_it_does_not_apply
 test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
+test_crewmate_scaffolds_filter_questions_before_raising
