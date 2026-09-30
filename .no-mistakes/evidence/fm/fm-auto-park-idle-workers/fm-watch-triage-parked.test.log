@@ -1,0 +1,3 @@
+ok - a parked worker's quiet pane is absorbed as healthy, never a stale wake
+ok - a parked worker's paused or captain-held wait keeps its long-cadence recheck
+ok - a parked worker's turn-end is absorbed, never a signal wake

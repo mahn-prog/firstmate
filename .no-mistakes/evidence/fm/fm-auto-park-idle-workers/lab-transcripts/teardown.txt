@@ -1,0 +1,12 @@
+$ bin/fm-teardown.sh s1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+WARNING: watcher still down (same stale episode; last beat: 998s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+teardown: reaping leaked worktree process(es) for s1: 66306
+teardown: force-killing leaked worktree process(es) for s1: 66306
+A new version of treehouse is available: v2.3.0 → v3.1.0
+Run "treehouse update" to update
+
+worktree /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a2d/1/demo is not managed by treehouse
+error: treehouse return failed for worktree /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a2d/1/demo; teardown aborted
+[exit 1]

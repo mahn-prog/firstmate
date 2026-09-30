@@ -1,0 +1,8 @@
+2026-09-30T04:12:30Z s1 parked: done (fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b stopped s1 harness=claude backend=tmux endpoint=primary:fm-s1 worktree=/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a)
+2026-09-30T04:26:47Z s1 unpark-refused: error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/Users/matteo/.no-mistakes/repos/d312268a53af.git)
+2026-09-30T04:27:50Z s1 unparked: a firstmate instruction was sent to its inbox
+2026-09-30T04:30:09Z s1 parked: done (fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b stopped s1 harness=claude backend=tmux endpoint=primary:fm-s1 worktree=/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a)
+2026-09-30T04:32:52Z s1 unparked: lab busy-guard check
+2026-09-30T04:38:10Z s1 parked: paused (fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b stopped s1 harness=claude backend=tmux endpoint=primary:fm-s1 worktree=/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a)
+2026-09-30T04:41:58Z s1 unparked: the time its declared wait named has passed
+2026-09-30T04:45:18Z s1 parked: done (fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b stopped s1 harness=claude backend=tmux endpoint=primary:fm-s1 worktree=/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a)

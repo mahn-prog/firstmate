@@ -1,0 +1,2 @@
+$ bin/fm-worker-park.sh scan
+[exit 0]

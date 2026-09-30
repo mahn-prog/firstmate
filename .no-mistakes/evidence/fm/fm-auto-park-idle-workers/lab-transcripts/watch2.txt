@@ -1,0 +1,3 @@
+$ bin/fm-watch.sh
+check: rearm-resurface
+[exit 0]

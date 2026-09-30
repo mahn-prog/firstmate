@@ -1,0 +1,3 @@
+$ bin/fm-crew-state.sh s1
+state: done · source: status-log · README.md:1 is '# demo'; report at data/s1/report.md, gate verified · worker parked since 2026-09-30T04:44Z (agent stopped while idle; relaunched on a steer, PR or validation activity, or its declared wait time)
+[exit 0]

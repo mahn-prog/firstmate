@@ -1,0 +1,3 @@
+$ bin/fm-watch.sh
+signal: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b/state/s1.status /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b/state/s1.turn-ended
+[exit 0]

@@ -1,0 +1,50 @@
+treehouse get
+matteo@MBA-MAHN-KN67QHT demo % treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.0
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a2d/1/demo. Type 'exit' to return.
+matteo@MBA-MAHN-KN67QHT demo % export GOTMPDIR=/tmp/fm-s1/gotmp
+matteo@MBA-MAHN-KN67QHT demo % export COMPACT_ADVISER_DISABLE=1
+matteo@MBA-MAHN-KN67QHT demo % export FM_TASK_ID=s1
+matteo@MBA-MAHN-KN67QHT demo % . '/tmp/fm-s1+9a3d3c5a9ba1ad561a78a5ca77c007f9ff78dd15e6605230db91ca30da23ac19/launch.s1790741224.60629.3467.sh'
+SessionEnd hook ['/Users/matteo/.no-mistakes/worktrees/d312268a53af/01M3R3CRKJEEFKANB6MDT9H7BX/bin/fm-busy-event.sh' apply '/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/state
+' 's1' idle --gen 'g1790741217.70346.5640' --source claude-hook --event session-end 2>/dev/null || true] failed: Hook cancelled
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+matteo@MBA-MAHN-KN67QHT demo %
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,3 @@
+$ bin/fm-crew-state.sh s1
+state: paused · source: status-log · waiting on review of https://github.com/mahn-prog/firstmate/pull/5 until 2026-09-30T04:41Z
+[exit 0]

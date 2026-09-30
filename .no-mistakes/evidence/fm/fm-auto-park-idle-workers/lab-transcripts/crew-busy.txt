@@ -1,0 +1,3 @@
+$ bin/fm-crew-state.sh s1
+state: working · source: pane · harness busy (claude-hook)
+[exit 0]

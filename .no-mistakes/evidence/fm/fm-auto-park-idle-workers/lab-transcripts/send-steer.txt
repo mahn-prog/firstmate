@@ -1,0 +1,5 @@
+$ bin/fm-send.sh s1 Append one more line to your report saying: relaunch after park confirmed. Then append a new done status line and stop.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+fm-send: s1's worker was parked; the steer is durably recorded at /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b/state/s1.inbox/001.msg and the worker is being relaunched to read it
+[exit 0]

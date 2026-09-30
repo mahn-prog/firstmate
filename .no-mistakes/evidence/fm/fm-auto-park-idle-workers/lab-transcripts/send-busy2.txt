@@ -1,0 +1,11 @@
+$ bin/fm-send.sh s1 Lab exercise: run exactly this command as one foreground Bash call with a 200000 ms timeout, not in the background: python3 -c "import time; time.sleep(120)" . Then stop. Do not append any status line for this.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: 308s ago, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  After draining queued wakes, watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+[exit 0]

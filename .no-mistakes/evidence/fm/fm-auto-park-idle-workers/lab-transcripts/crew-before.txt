@@ -1,0 +1,3 @@
+$ bin/fm-crew-state.sh s1
+state: done · source: status-log · README.md is a single line: '# demo'; report at data/s1/report.md
+[exit 0]

@@ -1,0 +1,26 @@
+ok - a done worker is parked through the idle-only exit once its grace elapses
+ok - done, paused, needs-decision, blocked, and captain-held workers are each parked
+ok - working, busy, validating, gated, and failed workers are never parked
+ok - an unread steering-inbox record keeps a waiting worker running
+ok - a waiting worker is not parked before its grace elapses
+ok - any change to the waiting signature restarts the grace clock
+ok - secondmates, remote placements, unverified backends, and leased tasks are skipped
+ok - config/worker-park off (or invalid) disables parking
+ok - a refused park leaves the worker alone, logs once, and backs off
+ok - an unread steer relaunches a parked worker and retires its marker
+ok - explicit unpark relaunches once and is idempotent
+ok - a refused unpark keeps the marker and records the refusal
+ok - a parked worker is relaunched once its declared wait time passes
+ok - a declared wait time already past when parking is not a relaunch cue
+ok - a parked worker's validation run at a gate or failed relaunches it; a fixing run does not
+ok - the per-scan read budget rotates so every waiting task is reached
+ok - a marker from an earlier incarnation is not honored
+ok - a parked worker's PR going red relaunches it
+ok - review findings, a merge conflict, and new human reviews or comments each relaunch a parked worker
+ok - a merged PR leaves a parked worker parked
+ok - an approving review or bot activity does not relaunch a parked worker; a human comment does
+ok - a new human comment wakes a parked worker even as older comments leave the last-100 window
+ok - a review started before the baseline but submitted after it wakes a parked worker
+ok - fm-send to a parked worker records the steer and starts its relaunch, typing nothing
+ok - fm-crew-state reports a parked worker's waiting state, not a dead endpoint
+ok - fm-send refuses a typed command to a parked worker instead of typing it into a shell

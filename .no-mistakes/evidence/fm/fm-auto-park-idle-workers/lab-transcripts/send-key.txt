@@ -1,0 +1,4 @@
+$ bin/fm-send.sh s1 --key Enter
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+[exit 0]

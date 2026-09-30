@@ -1,0 +1,5 @@
+$ bin/fm-send.sh s1 /compact
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+error: s1's worker is parked (its agent is stopped), so a typed command would reach a shell; send ordinary text, which relaunches it, and retry the command after it is back
+[exit 1]

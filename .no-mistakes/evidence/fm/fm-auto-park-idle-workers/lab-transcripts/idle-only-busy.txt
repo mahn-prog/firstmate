@@ -1,0 +1,4 @@
+$ bin/fm-control.sh s1 exit --idle-only
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+already-stopped s1 harness=claude backend=tmux endpoint=primary:fm-s1 worktree=/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a2d/1/demo
+[exit 0]

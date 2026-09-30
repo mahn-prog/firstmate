@@ -1,0 +1,11 @@
+$ bin/fm-teardown.sh s1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.BfTV8b
+WARNING: watcher still down (same stale episode; last beat: 1078s ago, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+A new version of treehouse is available: v2.3.0 → v3.1.0
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+teardown s1 complete (window primary:fm-s1, worktree /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/pool/.treehouse/demo-2f2a2d/1/demo)
+Backlog: s1 just finished (this home keeps no markdown backlog at /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/data/backlog.md). Update /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.BfTV8b/data/backlog.md - move s1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+[exit 0]
