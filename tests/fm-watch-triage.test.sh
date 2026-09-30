@@ -2313,6 +2313,28 @@ test_parked_worker_stale_pane_is_not_a_wake() {
   pass "a parked worker's quiet pane is absorbed as healthy, never a stale wake"
 }
 
+# Stopping a parked worker's agent can end its turn; that turn-end is not a wake.
+test_parked_worker_turn_end_is_not_a_wake() {
+  local dir state fakebin out window pid
+  dir=$(make_case parked-turnend); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  window="test:fm-done"
+  printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/done.meta"
+  printf 'done: PR https://example.test/pr/3\n' > "$state/done.status"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$state/done.worker-park"
+  printf '%s' "$(seen_sig "$state/done.status")" > "$state/.seen-done_status"
+  : > "$state/done.turn-ended"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's turn-end: $(cat "$out")"
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's turn-end: $(cat "$out")"
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_no_grep "signal:" "$out" "a parked worker's turn-end must not be a signal wake"
+  pass "a parked worker's turn-end is absorbed, never a signal wake"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -6643,6 +6665,7 @@ test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
 test_parked_worker_stale_pane_is_not_a_wake
+test_parked_worker_turn_end_is_not_a_wake
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold

@@ -270,8 +270,8 @@ for control_arg in "$@"; do
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
     --note) control_want_value=note ;;
-    --idle-only) IDLE_ONLY=1 ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
+    --idle-only) IDLE_ONLY=1 ;;
     --note-file) control_want_value=note_file ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"

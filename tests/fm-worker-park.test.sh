@@ -272,13 +272,61 @@ test_refused_unpark_is_recorded_for_escalation() {
 test_declared_wait_time_unparks() {
   local dir
   dir=$(new_home until)
-  status "$dir" t1 "paused [at=1]: waiting on vendor until 2001-01-01T00:00Z"
+  status "$dir" t1 "paused [at=1]: waiting on vendor until 2099-01-01T00:00Z"
   crew "$dir" t1 "state: paused · source: status-log · waiting on vendor"
   scan2 "$dir" >/dev/null
   assert_equals "t1 exit --idle-only" "$(control_log "$dir")" "the paused worker parks"
   run_park "$dir" scan >/dev/null
+  assert_equals "t1 exit --idle-only" "$(control_log "$dir")" "before its wait time it stays parked"
+  FM_WORKER_PARK_NOW=4102444800 run_park "$dir" scan >/dev/null
   assert_contains "$(control_log "$dir")" "t1 relaunch" "a passed declared wait time relaunches it"
   pass "a parked worker is relaunched once its declared wait time passes"
+}
+
+test_past_wait_time_does_not_cycle() {
+  local dir
+  dir=$(new_home until-past)
+  status "$dir" t1 "paused [at=1]: waiting on vendor until 2001-01-01T00:00Z"
+  crew "$dir" t1 "state: paused · source: status-log · waiting on vendor"
+  scan2 "$dir" >/dev/null
+  run_park "$dir" scan >/dev/null
+  assert_equals "t1 exit --idle-only" "$(control_log "$dir")" "a wait time already past must not relaunch the worker it just parked"
+  pass "a declared wait time already past when parking is not a relaunch cue"
+}
+
+test_validation_gate_unparks() {
+  local dir case_ crew_line want
+  while IFS='|' read -r case_ crew_line want; do
+    dir=$(parked_home "run-$case_")
+    crew "$dir" t1 "$crew_line"
+    run_park "$dir" scan >/dev/null
+    if [ -n "$want" ]; then
+      assert_contains "$(control_log "$dir")" "$want" "$case_ relaunches the parked worker"
+    else
+      assert_equals "" "$(control_log "$dir")" "$case_ leaves the worker parked"
+    fi
+  done <<'EOF'
+gate|state: parked · source: run-step · awaiting_approval|waiting at a gate
+failed|state: failed · source: run-step · run failed|validation run failed
+fixing|state: working · source: run-step · run active (fixing)|
+EOF
+  pass "a parked worker's validation run at a gate or failed relaunches it; a fixing run does not"
+}
+
+test_budget_rotation_reaches_every_task() {
+  local dir i
+  dir=$(new_home rotate)
+  add_task "$dir" t2
+  for id in t1 t2; do
+    status "$dir" "$id" "done [at=1]: report at data/$id/report.md"
+    crew "$dir" "$id" "state: done · source: status-log · report"
+  done
+  for i in 1 2 3 4 5 6; do
+    FM_WORKER_PARK_MAX_READS=1 run_park "$dir" scan >/dev/null
+  done
+  assert_present "$dir/state/t1.worker-park" "t1 is parked"
+  assert_present "$dir/state/t2.worker-park" "a task past a spent read budget is not starved"
+  pass "the per-scan read budget rotates so every waiting task is reached"
 }
 
 test_relaunch_by_hand_invalidates_the_marker() {
@@ -347,6 +395,20 @@ test_merged_pr_stays_parked() {
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "a merged PR leaves the worker parked for cleanup"
   pass "a merged PR leaves a parked worker parked"
+}
+
+test_approval_and_bot_comment_do_not_unpark() {
+  local dir fb
+  dir=$(parked_home pr-quiet)
+  fb="$dir/stub/fakebin"
+  mkdir -p "$fb"
+  gh_stub "$fb"
+  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","statusCheckRollup":[],"reviews":[{"state":"APPROVED"}],"comments":[{"author":{"login":"ci-helper[bot]"}}]}' > "$dir/stub/pr.json"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  assert_equals "" "$(control_log "$dir")" "an approval and a bot comment leave the worker parked"
+  pass "an approving review or a bot comment does not relaunch a parked worker"
 }
 
 # --- fm-send and the watcher's readers -------------------------------------
@@ -434,10 +496,14 @@ test_steer_unparks_the_worker
 test_explicit_unpark_and_idempotence
 test_refused_unpark_is_recorded_for_escalation
 test_declared_wait_time_unparks
+test_past_wait_time_does_not_cycle
+test_validation_gate_unparks
+test_budget_rotation_reaches_every_task
 test_relaunch_by_hand_invalidates_the_marker
 test_pr_activity_unparks
 test_pr_review_and_conflict_unpark
 test_merged_pr_stays_parked
+test_approval_and_bot_comment_do_not_unpark
 test_fm_send_to_a_parked_worker_starts_the_unpark
 test_crew_state_reports_a_parked_worker_as_waiting
 test_fm_send_refuses_a_typed_command_to_a_parked_worker

@@ -20,10 +20,12 @@
 #   plane can prove a stop, never a task under a supervision lease:
 #   - A parked worker is unparked when its steering inbox holds an unread
 #     record, when the `until <UTC>` time of the wait it was parked on has
-#     passed, or when its GitHub PR (read at most every FM_WORKER_PARK_PR_SECS)
-#     newly shows a failed check, a changes-requested review, a merge
-#     conflict, or more reviews and comments than at its first read after
-#     parking. A merged or closed PR leaves it parked for cleanup.
+#     passed, when its validation run reads parked at a gate or failed, or
+#     when its GitHub PR newly shows a failed check, a changes-requested
+#     review, a merge conflict, or more non-approval reviews and non-bot
+#     comments than at its first read after parking. The run and PR are read
+#     at most every FM_WORKER_PARK_PR_SECS per task. A merged or closed PR
+#     leaves it parked for cleanup.
 #   - Any other worker is parked when parking is on, its inbox is empty, and
 #     fm-crew-state.sh has reported it waiting with an unchanged signature
 #     (state, source, status-log size, unread count) for the grace period.
@@ -59,6 +61,7 @@
 #   FM_WORKER_PARK_RETRY_SECS     backoff after a refusal (1800)
 #   FM_WORKER_PARK_CONTROL_BIN    lifecycle owner (bin/fm-control.sh; tests stub)
 #   FM_CREW_STATE_BIN             current-state reader (bin/fm-crew-state.sh)
+#   FM_WORKER_PARK_NOW            epoch to use as "now" (tests only)
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,7 +102,7 @@ MAX_READS=$(num "${FM_WORKER_PARK_MAX_READS:-}" 6)
 MAX_ACTIONS=$(num "${FM_WORKER_PARK_MAX_ACTIONS:-}" 2)
 PR_SECS=$(num "${FM_WORKER_PARK_PR_SECS:-}" 300)
 RETRY_SECS=$(num "${FM_WORKER_PARK_RETRY_SECS:-}" 1800)
-NOW=$(date +%s)
+NOW=$(num "${FM_WORKER_PARK_NOW:-}" "$(date +%s)")
 SEP=' · '
 
 log() {  # <id> <event> <detail>
@@ -134,32 +137,44 @@ parkable_task() {  # <id>
   [ ! -e "$STATE/.lease-$id" ]
 }
 
+# The state or source field of one fm-crew-state.sh line.
+crew_field() {  # <crew-line> <state|source>
+  local v
+  case "$2" in
+    state) v=${1#state: } ;;
+    source) v=${1#*"$SEP"source: } ;;
+  esac
+  printf '%s' "${v%%"$SEP"*}"
+}
+
 # 0 when a refusal of <action> for <id> is still inside its backoff.
 refusal_backing_off() {  # <id> <action>
-  local f="$STATE/$1.worker-park-refused" action at
-  [ -f "$f" ] || return 1
-  IFS=$'\t' read -r action at _ < "$f" 2>/dev/null || return 1
+  local action at
+  IFS=$'\t' read -r action at _ <<< "$(fm_worker_park_refusal "$STATE" "$1")" || return 1
   [ "$action" = "$2" ] || return 1
   [ $((NOW - $(num "$at" 0))) -lt "$RETRY_SECS" ]
 }
 
 # Record a refusal, logging it only when it differs from the recorded one.
 record_refusal() {  # <id> <action> <text>
-  local f="$STATE/$1.worker-park-refused" text prev_action prev_text
+  local text prev_action prev_text
   text=$(one_line "$3")
-  if [ -f "$f" ]; then
-    IFS=$'\t' read -r prev_action _ prev_text < "$f" 2>/dev/null || true
-    [ "$prev_action" = "$2" ] && [ "$prev_text" = "$text" ] \
-      || log "$1" "$2-refused" "$text"
-  else
-    log "$1" "$2-refused" "$text"
-  fi
-  printf '%s\t%s\t%s\n' "$2" "$NOW" "$text" > "$f"
+  prev_action=
+  prev_text=
+  IFS=$'\t' read -r prev_action _ prev_text <<< "$(fm_worker_park_refusal "$STATE" "$1")" || true
+  [ "$prev_action" = "$2" ] && [ "$prev_text" = "$text" ] \
+    || log "$1" "$2-refused" "$text"
+  printf '%s\t%s\t%s\n' "$2" "$NOW" "$text" > "$STATE/$1.worker-park-refused"
 }
 
-retire_records() {  # <id>
-  rm -f "$(fm_worker_park_marker "$STATE" "$1")" "$STATE/$1.worker-park-watch" \
-    "$STATE/$1.worker-park-refused" "$STATE/$1.worker-park-pr"
+# Retire every park record for <id>; with keep-marker, all but the marker.
+retire_records() {  # <id> [keep-marker]
+  local f marker
+  marker=$(fm_worker_park_marker "$STATE" "$1")
+  while IFS= read -r f; do
+    [ "${2:-}" = keep-marker ] && [ "$f" = "$marker" ] && continue
+    rm -f "$f"
+  done < <(fm_worker_park_records "$STATE" "$1")
 }
 
 # The PR a parked worker is waiting on: the record's pr=, else the first PR URL
@@ -178,10 +193,11 @@ waiting_crew_line() {  # <id> <resolved-status-line>
   local id=$1 line=$2 crew state source
   crew=$(FM_HOME="$FM_HOME" FM_CREW_STATE_NO_FORGE=1 "$CREW_STATE" "$id" 2>/dev/null) || return 1
   crew=$(printf '%s\n' "$crew" | tail -1)
-  state=${crew#state: }
-  state=${state%%"$SEP"*}
-  source=${crew#*"$SEP"source: }
-  source=${source%%"$SEP"*}
+  state=$(crew_field "$crew" state)
+  source=$(crew_field "$crew" source)
+  # crew-state's own `parked` means a decision is open; from the status log it
+  # is the worker's needs-decision, while from run-step it is a live
+  # validation gate the worker must attend, so only the former waits here.
   case "$state:$source" in
     done:*|paused:*|blocked:status-log|parked:status-log) ;;
     unknown:none)
@@ -200,9 +216,11 @@ waiting_crew_line() {  # <id> <resolved-status-line>
 park() {  # <id> <crew-line> <resolved-status-line>
   local id=$1 crew=$2 line=$3 marker state until out rc
   marker=$(fm_worker_park_marker "$STATE" "$id")
-  state=${crew#state: }
-  state=${state%%"$SEP"*}
+  state=$(crew_field "$crew" state)
   until=$(status_paused_until "$line" 2>/dev/null || true)
+  # A wait time already past cannot be the cue to come back: it would relaunch
+  # the worker on the next scan and park it again after every grace.
+  [ -z "$until" ] || [ "$until" -gt "$NOW" ] || until=
   {
     echo "schema=fm-worker-park.v1"
     echo "spawn_gen=$(meta "$id" spawn_gen)"
@@ -220,7 +238,7 @@ park() {  # <id> <crew-line> <resolved-status-line>
     record_refusal "$id" park "$out"
     return 1
   fi
-  rm -f "$STATE/$id.worker-park-watch" "$STATE/$id.worker-park-refused" "$STATE/$id.worker-park-pr"
+  retire_records "$id" keep-marker
   log "$id" parked "$state ($(one_line "$out"))"
 }
 
@@ -235,7 +253,7 @@ unpark() {  # <id> <reason>
   fi
   state=$(fm_worker_park_field "$STATE" "$id" state)
   at=$(fm_worker_park_field "$STATE" "$id" parked_at)
-  note="Firstmate parked this worker (stopped its agent while the task waited in state '$state') at $(date -u -r "$at" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$at" +%Y-%m-%dT%H:%MZ 2>/dev/null || printf 'epoch %s' "$at") and relaunched it because: $reason. Nothing in the local copy changed while it was parked. Read your inbox as instructed above and any handoff you keep, then continue the task from its current state."
+  note="Firstmate parked this worker (stopped its agent while the task waited in state '$state') at $(fm_worker_park_utc "$at") and relaunched it because: $reason. Nothing in the local copy changed while it was parked. Read your inbox as instructed above and any handoff you keep, then continue the task from its current state."
   rc=0
   out=$(FM_HOME="$FM_HOME" "$CONTROL" "$id" relaunch --note "$note" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -253,17 +271,14 @@ unpark() {  # <id> <reason>
 # --- PR trigger -------------------------------------------------------------
 
 # Prints the unpark reason when the parked worker's PR newly needs it. Counts one
-# read when a read is due.
+# read (the caller counts it). New activity counts reviews other than approvals and comments whose
+# author is not a bot, so an approval or a bot note does not wake the worker.
 pr_reason() {  # <id>
   local id=$1 url f json now_flags red changes conflict activity open
   local b_red b_changes b_conflict b_activity
   url=$(fm_worker_park_field "$STATE" "$id" pr)
   case "$url" in https://github.com/*/pull/[0-9]*) ;; *) return 1 ;; esac
   f="$STATE/$id.worker-park-pr"
-  if [ -f "$f" ]; then
-    [ $((NOW - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0))) -ge "$PR_SECS" ] || return 1
-  fi
-  READS=$((READS + 1))
   json=$(fm_run_timed 20 gh pr view "$url" --json state,mergeable,reviewDecision,statusCheckRollup,reviews,comments 2>/dev/null) || return 1
   now_flags=$(printf '%s' "$json" | jq -r '
     [ (if .state == "OPEN" then 1 else 0 end),
@@ -271,7 +286,8 @@ pr_reason() {  # <id>
            | any(. == "FAILURE" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE" or . == "ERROR")) then 1 else 0 end),
       (if .reviewDecision == "CHANGES_REQUESTED" then 1 else 0 end),
       (if .mergeable == "CONFLICTING" then 1 else 0 end),
-      ((.reviews | length) + (.comments | length)) ] | @tsv' 2>/dev/null) || return 1
+      (([.reviews[]? | select(.state != "APPROVED")] | length)
+       + ([.comments[]? | select((.author.login // "") | endswith("[bot]") | not)] | length)) ] | @tsv' 2>/dev/null) || return 1
   IFS=$'\t' read -r open red changes conflict activity <<< "$now_flags"
   [ -n "${activity:-}" ] || return 1
   if [ ! -f "$f" ]; then
@@ -288,6 +304,26 @@ pr_reason() {  # <id>
   return 1
 }
 
+# Prints the unpark reason when the parked worker's validation run moved to a
+# point only the worker can act on: a gate awaiting its answer, or a failure.
+# Counts one read (the caller counts it).
+run_reason() {  # <id>
+  local crew
+  crew=$(FM_HOME="$FM_HOME" FM_CREW_STATE_NO_FORGE=1 "$CREW_STATE" "$1" 2>/dev/null | tail -1) || return 1
+  case "$(crew_field "$crew" state):$(crew_field "$crew" source)" in
+    parked:run-step) printf 'its validation run is waiting at a gate for it' ;;
+    failed:run-step) printf 'its validation run failed' ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 when the parked worker's PR and run are due another read.
+checks_due() {  # <id>
+  local f="$STATE/$1.worker-park-checked"
+  [ -f "$f" ] || return 0
+  [ $((NOW - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0))) -ge "$PR_SECS" ]
+}
+
 # --- scan -------------------------------------------------------------------
 
 READS=0
@@ -301,8 +337,14 @@ scan_parked() {  # <id>
     until=$(fm_worker_park_field "$STATE" "$id" until)
     if [ -n "$until" ] && [ "$NOW" -ge "$(num "$until" 0)" ]; then
       reason="the time its declared wait named has passed"
-    elif [ "$READS" -lt "$MAX_READS" ]; then
-      reason=$(pr_reason "$id") || reason=
+    elif [ "$READS" -lt "$MAX_READS" ] && checks_due "$id"; then
+      touch "$STATE/$id.worker-park-checked"
+      READS=$((READS + 1))
+      reason=$(run_reason "$id") || reason=
+      if [ -z "$reason" ] && [ "$READS" -lt "$MAX_READS" ]; then
+        READS=$((READS + 1))
+        reason=$(pr_reason "$id") || reason=
+      fi
     fi
   fi
   [ -n "$reason" ] || return 0
@@ -387,9 +429,10 @@ scan() {
       [ "$enabled" = 1 ] || { rm -f "$STATE/$id.worker-park-watch"; continue; }
       scan_idle "$id" "$grace" || rc=$?
     fi
-    printf '%s\n' "$id" > "$STATE/.worker-park-cursor"
-    # A spent budget ends the scan; the cursor resumes after the last task seen.
+    # A spent budget ends the scan before this task was read, so the cursor
+    # stays on the last task examined and the next scan starts with this one.
     [ "$rc" -ne 2 ] || break
+    printf '%s\n' "$id" > "$STATE/.worker-park-cursor"
   done
   fm_lock_release "$lock" || true
 }
@@ -406,6 +449,7 @@ case "$1" in
     ;;
   status)
     [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+    [ -f "$STATE/$2.meta" ] || { echo "error: no task '$2' in $STATE" >&2; exit 1; }
     if fm_worker_park_valid "$STATE" "$2"; then
       echo "parked: $(fm_worker_park_describe "$STATE" "$2")"
     else

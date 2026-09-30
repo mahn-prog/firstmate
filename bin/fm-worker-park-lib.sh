@@ -18,6 +18,7 @@
 #   state/<id>.worker-park-watch    "<first-seen-epoch>\t<signature>" grace clock
 #   state/<id>.worker-park-refused  "<action>\t<epoch>\t<refusal text>"
 #   state/<id>.worker-park-pr       "<red> <changes> <conflict> <activity>" baseline
+#   state/<id>.worker-park-checked  mtime = last PR and run read while parked
 #   state/worker-park.log           append-only "<UTC> <id> <event>: <detail>"
 #
 # A marker is VALID only while its spawn_gen equals the task record's current
@@ -31,11 +32,8 @@
 # unknown), bin/fm-session-start.sh (prints `endpoint: parked`), and
 # bin/fm-teardown.sh (removes every record above except the shared log).
 #
-# Config (docs/configuration.md "Worker parking" owns the user contract):
-# config/worker-park absent means on with the default grace; a first line
-# `off` disables parking; a first line of digits sets the grace in seconds.
-# FM_WORKER_PARK_GRACE_SECS overrides the grace. Anything else reads invalid,
-# which disables parking and is reported by the scan.
+# Config: fm_worker_park_config below parses config/worker-park, whose user
+# contract docs/configuration.md "Worker parking" owns.
 #
 # Dependency-free and side-effect free on source; set -u safe.
 
@@ -57,6 +55,14 @@ fm_worker_park_kv() {  # <file> <key>
   printf '%s' "$value"
 }
 
+# Every per-task record path above, one per line (teardown and unpark retire them).
+fm_worker_park_records() {  # <state-dir> <id>
+  local suffix
+  for suffix in '' -watch -refused -pr -checked; do
+    printf '%s/%s.worker-park%s\n' "$1" "$2" "$suffix"
+  done
+}
+
 fm_worker_park_field() {  # <state-dir> <id> <key>
   fm_worker_park_kv "$(fm_worker_park_marker "$1" "$2")" "$3"
 }
@@ -71,12 +77,19 @@ fm_worker_park_valid() {  # <state-dir> <id>
   [ "$(fm_worker_park_kv "$marker" spawn_gen)" = "$(fm_worker_park_kv "$meta" spawn_gen)" ]
 }
 
+# The recorded refusal as "<action>\t<epoch>\t<text>", or fail when none.
+fm_worker_park_refusal() {  # <state-dir> <id>
+  local line f="$1/$2.worker-park-refused"
+  [ -f "$f" ] || return 1
+  IFS= read -r line < "$f" || return 1
+  printf '%s\n' "$line"
+}
+
 # 0 when the last recorded refusal for <id> was an unpark, so its unread steer
 # must go back to the ordinary escalation path instead of waiting on unpark.
 fm_worker_park_unpark_refused() {  # <state-dir> <id>
-  local f="$1/$2.worker-park-refused" action
-  [ -f "$f" ] || return 1
-  IFS=$'\t' read -r action _ < "$f" 2>/dev/null || return 1
+  local action
+  IFS=$'\t' read -r action _ <<< "$(fm_worker_park_refusal "$1" "$2")" || return 1
   [ "$action" = unpark ]
 }
 
@@ -102,10 +115,16 @@ fm_worker_park_config() {  # <config-dir>
   printf 'on %s\n' "$grace"
 }
 
+# <epoch> as a UTC minute stamp, or "an unknown time".
+fm_worker_park_utc() {  # <epoch>
+  case "$1" in
+    ''|*[!0-9]*) printf 'an unknown time' ;;
+    *) date -u -r "$1" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%MZ 2>/dev/null || printf 'epoch %s' "$1" ;;
+  esac
+}
+
 # Human line for readers that report a parked task.
 fm_worker_park_describe() {  # <state-dir> <id>
-  local at when
-  at=$(fm_worker_park_field "$1" "$2" parked_at)
-  when=$(date -u -r "$at" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$at" +%Y-%m-%dT%H:%MZ 2>/dev/null || printf '%s' "$at")
-  printf 'worker parked since %s (agent stopped while idle; relaunched on a steer, PR activity, or its declared wait time)' "$when"
+  printf 'worker parked since %s (agent stopped while idle; relaunched on a steer, PR or validation activity, or its declared wait time)' \
+    "$(fm_worker_park_utc "$(fm_worker_park_field "$1" "$2" parked_at)")"
 }
