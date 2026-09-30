@@ -853,6 +853,36 @@ test_idle_agent_is_not_interrupted() {
   pass "fm-control exit: an idle agent goes straight to its exit command"
 }
 
+test_idle_only_exit_refuses_a_busy_agent() {
+  local dir out rc gen
+  dir=$(new_case idle-only-busy)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(run_control "$dir" t1 exit --idle-only); rc=$?
+  expect_code 1 "$rc" "an idle-only exit of a busy agent must refuse"$'\n'"$out"
+  [ -z "$(keys_sent "$dir")" ] || fail "an idle-only exit must never interrupt, got keys: $(keys_sent "$dir")"
+  [ -z "$(literals "$dir")" ] || fail "an idle-only exit of a busy agent must type nothing, got: $(literals "$dir")"
+  assert_contains "$out" "idle-only" "the refusal names the guard"
+  pass "fm-control exit --idle-only: a busy agent is refused untouched"
+}
+
+test_idle_only_exit_stops_an_idle_agent() {
+  local dir out rc gen
+  dir=$(new_case idle-only-idle)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1 --state idle --source fm-spawn --event seed)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(run_control "$dir" t1 exit --idle-only); rc=$?
+  expect_code 0 "$rc" "an idle-only exit of an idle agent should succeed"$'\n'"$out"
+  [ "$(literals "$dir")" = "/exit" ] || fail "the exit command should be sent"
+  out=$(run_control "$dir" t1 interrupt --idle-only); rc=$?
+  expect_code 1 "$rc" "--idle-only belongs to exit only"
+  pass "fm-control exit --idle-only: an idle agent is stopped, and the flag is exit-only"
+}
+
 test_interrupt_without_acknowledgement_preserves_busy_state() {
   local dir gen before after out rc
   dir=$(new_case unconfirmed)
@@ -1100,6 +1130,8 @@ test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
+test_idle_only_exit_refuses_a_busy_agent
+test_idle_only_exit_stops_an_idle_agent
 test_interrupt_without_acknowledgement_preserves_busy_state
 test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait

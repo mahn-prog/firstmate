@@ -368,6 +368,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# shellcheck source=bin/fm-worker-park-lib.sh
+. "$SCRIPT_DIR/fm-worker-park-lib.sh"
 
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
@@ -890,7 +892,11 @@ for meta in "$STATE"/*.meta; do
 
   window=$(fm_meta_get "$meta" window)
   target=$(fm_backend_target_of_meta "$meta")
-  if [ -n "$window" ]; then
+  if [ -n "$window" ] && fm_worker_park_valid "$STATE" "$id"; then
+    # Stopped on purpose while its task waits: healthy, never a recovery case.
+    printf 'endpoint: parked (backend=%s window=%s - %s; not dead, do not relaunch it for liveness)\n' \
+      "$(fm_backend_of_meta "$meta")" "$window" "$(fm_worker_park_describe "$STATE" "$id")"
+  elif [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
     endpoint_rc=0
     fm_session_start_endpoint_read "$backend" "${target:-$window}" "fm-$id" || endpoint_rc=$?

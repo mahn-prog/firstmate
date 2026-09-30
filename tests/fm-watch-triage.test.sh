@@ -2285,6 +2285,34 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# --- a parked worker's quiet pane is healthy, not a stale wake ----------------
+# The same terminal-status stale pane as above, but the worker was parked
+# (bin/fm-worker-park-lib.sh): its agent was stopped on purpose, so the watcher
+# must neither surface it as stale nor probe it as a dead record.
+test_parked_worker_stale_pane_is_not_a_wake() {
+  local dir state fakebin out capture_file window key pid
+  dir=$(make_case parked-stale); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-done"
+  printf '$ ' > "$capture_file"
+  printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/done.meta"
+  printf 'done: PR https://example.test/pr/3\n' > "$state/done.status"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$state/done.worker-park"
+  printf '%s' "$(seen_sig "$state/done.status")" > "$state/.seen-done_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text '$ ')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's quiet pane: $(cat "$out")"
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's quiet pane: $(cat "$out")"
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_no_grep "stale:" "$out" "a parked worker's pane must not be reported stale"
+  pass "a parked worker's quiet pane is absorbed as healthy, never a stale wake"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -6614,6 +6642,7 @@ test_routine_appends_after_a_classified_event_stay_absorbed
 test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
+test_parked_worker_stale_pane_is_not_a_wake
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
