@@ -458,6 +458,22 @@ test_full_comment_window_still_sees_new_human_comment() {
   pass "a new human comment wakes a parked worker even as older comments leave the last-100 window"
 }
 
+# A review's createdAt is when its author started it; a review started before
+# the baseline but submitted after it is new activity.
+test_late_submitted_review_unparks() {
+  local dir fb
+  dir=$(parked_home pr-late-review)
+  fb="$dir/stub/fakebin"
+  mkdir -p "$fb"
+  gh_stub "$fb"
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[{"createdAt":"2026-09-29T10:15:00Z","author":{"__typename":"User"}}]'
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[{"state":"COMMENTED","createdAt":"2026-09-29T10:00:00Z","submittedAt":"2026-09-29T10:30:00Z","author":{"__typename":"User"}}]' '[{"createdAt":"2026-09-29T10:15:00Z","author":{"__typename":"User"}}]'
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  assert_contains "$(control_log "$dir")" "new reviews or comments" "a review submitted after the baseline relaunches the worker"
+  pass "a review started before the baseline but submitted after it wakes a parked worker"
+}
+
 # --- fm-send and the watcher's readers -------------------------------------
 
 # A tmux stub whose only pane holds a shell: the parked worker's agent is gone.
@@ -552,6 +568,7 @@ test_pr_review_and_conflict_unpark
 test_merged_pr_stays_parked
 test_approval_and_bot_activity_do_not_unpark
 test_full_comment_window_still_sees_new_human_comment
+test_late_submitted_review_unparks
 test_fm_send_to_a_parked_worker_starts_the_unpark
 test_crew_state_reports_a_parked_worker_as_waiting
 test_fm_send_refuses_a_typed_command_to_a_parked_worker

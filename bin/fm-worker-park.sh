@@ -277,17 +277,18 @@ PR_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
       state mergeable reviewDecision
       commits(last: 1) { nodes { commit { statusCheckRollup { contexts(last: 100) {
         nodes { ... on CheckRun { conclusion } ... on StatusContext { state } } } } } } }
-      reviews(last: 100) { nodes { state createdAt author { __typename } } }
+      reviews(last: 100) { nodes { state createdAt submittedAt author { __typename } } }
       comments(last: 100) { nodes { createdAt author { __typename } } }
     }
   }
 }'
 
 # Prints the unpark reason when the parked worker's PR newly needs it. Counts one
-# read (the caller counts it). Activity is the newest review other than an
-# approval or comment from an author other than a bot, so an approval or a bot
-# note does not wake the worker, and older items leaving the last-100 window
-# cannot hide a new one.
+# read (the caller counts it). Activity is the newest review submission other
+# than an approval or comment from an author other than a bot, so an approval or
+# a bot note does not wake the worker, older items leaving the last-100 window
+# cannot hide a new one, and a review started long before it was submitted
+# still counts as new.
 pr_reason() {  # <id>
   local id=$1 url f json now_flags red changes conflict activity open
   local b_red b_changes b_conflict b_activity
@@ -303,8 +304,9 @@ pr_reason() {  # <id>
              | any(. == "FAILURE" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE" or . == "ERROR")) then 1 else 0 end),
         (if .reviewDecision == "CHANGES_REQUESTED" then 1 else 0 end),
         (if .mergeable == "CONFLICTING" then 1 else 0 end),
-        ([(.reviews.nodes[]? | select(.state != "APPROVED")), .comments.nodes[]?
-          | select(.author.__typename != "Bot") | .createdAt // empty] | max // "0") ] | @tsv' 2>/dev/null) || return 1
+        ([(.reviews.nodes[]? | select(.state != "APPROVED") | select(.author.__typename != "Bot")
+           | .submittedAt // .createdAt // empty),
+          (.comments.nodes[]? | select(.author.__typename != "Bot") | .createdAt // empty)] | max // "0") ] | @tsv' 2>/dev/null) || return 1
   IFS=$'\t' read -r open red changes conflict activity <<< "$now_flags"
   [ -n "${activity:-}" ] || return 1
   if [ ! -f "$f" ]; then
