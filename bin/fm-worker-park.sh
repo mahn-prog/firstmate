@@ -4,7 +4,6 @@
 #
 # Usage: fm-worker-park.sh scan
 #        fm-worker-park.sh unpark <task-id> --reason <text>
-#        fm-worker-park.sh status <task-id>
 #
 # Why: an idle worker agent still holds memory. A worker that has finished
 # (scout report written, PR ready and only awaiting merge), declared a
@@ -22,8 +21,8 @@
 #     record, when the `until <UTC>` time of the wait it was parked on has
 #     passed, when its validation run reads parked at a gate or failed, or
 #     when its GitHub PR newly shows a failed check, a changes-requested
-#     review, a merge conflict, or more non-approval reviews and non-bot
-#     comments than at its first read after parking. The run and PR are read
+#     review, a merge conflict, or more non-approval reviews and comments by
+#     authors other than bots than at its first read after parking. The run and PR are read
 #     at most every FM_WORKER_PARK_PR_SECS per task. A merged or closed PR
 #     leaves it parked for cleanup.
 #   - Any other worker is parked when parking is on, its inbox is empty, and
@@ -72,7 +71,7 @@ usage() {
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  scan|unpark|status) ;;
+  scan|unpark) ;;
   *) usage >&2; exit 2 ;;
 esac
 
@@ -270,24 +269,41 @@ unpark() {  # <id> <reason>
 
 # --- PR trigger -------------------------------------------------------------
 
+# The GraphQL read behind pr_reason: author types expose bots, whose GitHub App
+# logins carry no marker of their own.
+PR_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      state mergeable reviewDecision
+      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(last: 100) {
+        nodes { ... on CheckRun { conclusion } ... on StatusContext { state } } } } } } }
+      reviews(last: 100) { nodes { state author { __typename } } }
+      comments(last: 100) { nodes { author { __typename } } }
+    }
+  }
+}'
+
 # Prints the unpark reason when the parked worker's PR newly needs it. Counts one
-# read (the caller counts it). New activity counts reviews other than approvals and comments whose
-# author is not a bot, so an approval or a bot note does not wake the worker.
+# read (the caller counts it). New activity counts reviews other than approvals
+# and comments, from authors other than bots, so an approval or a bot note does
+# not wake the worker.
 pr_reason() {  # <id>
   local id=$1 url f json now_flags red changes conflict activity open
   local b_red b_changes b_conflict b_activity
   url=$(fm_worker_park_field "$STATE" "$id" pr)
-  case "$url" in https://github.com/*/pull/[0-9]*) ;; *) return 1 ;; esac
+  [[ $url =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || return 1
   f="$STATE/$id.worker-park-pr"
-  json=$(fm_run_timed 20 gh pr view "$url" --json state,mergeable,reviewDecision,statusCheckRollup,reviews,comments 2>/dev/null) || return 1
+  json=$(fm_run_timed 20 gh api graphql -f query="$PR_QUERY" -f owner="${BASH_REMATCH[1]}" \
+    -f repo="${BASH_REMATCH[2]}" -F number="${BASH_REMATCH[3]}" 2>/dev/null) || return 1
   now_flags=$(printf '%s' "$json" | jq -r '
-    [ (if .state == "OPEN" then 1 else 0 end),
-      (if ([.statusCheckRollup[]? | (.conclusion // "") , (.state // "")]
-           | any(. == "FAILURE" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE" or . == "ERROR")) then 1 else 0 end),
-      (if .reviewDecision == "CHANGES_REQUESTED" then 1 else 0 end),
-      (if .mergeable == "CONFLICTING" then 1 else 0 end),
-      (([.reviews[]? | select(.state != "APPROVED")] | length)
-       + ([.comments[]? | select((.author.login // "") | endswith("[bot]") | not)] | length)) ] | @tsv' 2>/dev/null) || return 1
+    .data.repository.pullRequest
+    | [ (if .state == "OPEN" then 1 else 0 end),
+        (if ([.commits.nodes[]?.commit.statusCheckRollup.contexts.nodes[]? | (.conclusion // ""), (.state // "")]
+             | any(. == "FAILURE" or . == "TIMED_OUT" or . == "CANCELLED" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE" or . == "ERROR")) then 1 else 0 end),
+        (if .reviewDecision == "CHANGES_REQUESTED" then 1 else 0 end),
+        (if .mergeable == "CONFLICTING" then 1 else 0 end),
+        ([(.reviews.nodes[]? | select(.state != "APPROVED")), .comments.nodes[]?
+          | select(.author.__typename != "Bot")] | length) ] | @tsv' 2>/dev/null) || return 1
   IFS=$'\t' read -r open red changes conflict activity <<< "$now_flags"
   [ -n "${activity:-}" ] || return 1
   if [ ! -f "$f" ]; then
@@ -446,14 +462,5 @@ case "$1" in
     [ "$#" -eq 4 ] && [ "$3" = --reason ] && [ -n "$4" ] || { usage >&2; exit 2; }
     [ -f "$STATE/$2.meta" ] || { echo "error: no task '$2' in $STATE" >&2; exit 1; }
     unpark "$2" "$4"
-    ;;
-  status)
-    [ "$#" -eq 2 ] || { usage >&2; exit 2; }
-    [ -f "$STATE/$2.meta" ] || { echo "error: no task '$2' in $STATE" >&2; exit 1; }
-    if fm_worker_park_valid "$STATE" "$2"; then
-      echo "parked: $(fm_worker_park_describe "$STATE" "$2")"
-    else
-      echo "not parked"
-    fi
     ;;
 esac

@@ -2313,6 +2313,35 @@ test_parked_worker_stale_pane_is_not_a_wake() {
   pass "a parked worker's quiet pane is absorbed as healthy, never a stale wake"
 }
 
+# A parked worker's declared paused or captain-held wait still takes the bounded
+# long-cadence recheck, and never a wedge escalation.
+test_parked_worker_declared_wait_is_rechecked() {
+  local dir state fakebin out window pid wait_kind status_line want back
+  while IFS='|' read -r wait_kind status_line want; do
+    dir=$(make_case "parked-recheck-$wait_kind"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"
+    window="test:fm-held"
+    printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/held.meta"
+    printf '%s\n' "$status_line" > "$state/held.status"
+    printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=paused\n' > "$state/held.worker-park"
+    back=$(( $(date +%s) - 500 ))
+    set_mtime "$back" "$state/held.status"
+    printf '%s' "$(seen_sig "$state/held.status")" > "$state/.seen-held_status"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" \
+      FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "a parked $wait_kind worker's wait was never rechecked"
+    grep -F "stale: $window" "$out" >/dev/null || fail "the $wait_kind recheck did not print a stale wake: $(cat "$out")"
+    grep -F "$want" "$out" >/dev/null || fail "the $wait_kind recheck lost its declared-wait wording: $(cat "$out")"
+    grep -F "possible wedge" "$out" >/dev/null && fail "a parked $wait_kind worker was treated as a possible wedge"
+  done <<'EOF'
+paused|paused: waiting on the vendor|awaiting external
+captain-held|captain-held: held for the captain|answer the held decision
+EOF
+  pass "a parked worker's paused or captain-held wait keeps its long-cadence recheck"
+}
+
 # Stopping a parked worker's agent can end its turn; that turn-end is not a wake.
 test_parked_worker_turn_end_is_not_a_wake() {
   local dir state fakebin out window pid
@@ -6665,6 +6694,7 @@ test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
 test_parked_worker_stale_pane_is_not_a_wake
+test_parked_worker_declared_wait_is_rechecked
 test_parked_worker_turn_end_is_not_a_wake
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated

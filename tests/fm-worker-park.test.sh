@@ -82,8 +82,7 @@ test_done_worker_is_parked_after_grace() {
   assert_equals "" "$(control_log "$dir")" "the first sighting only starts the grace clock"$'\n'"$out"
   out=$(run_park "$dir" scan)
   assert_equals "t1 exit --idle-only" "$(control_log "$dir")" "a done worker past its grace is stopped idle-only"$'\n'"$out"
-  out=$(run_park "$dir" status t1)
-  assert_contains "$out" "parked" "status reports the parked worker"
+  assert_present "$dir/state/t1.worker-park" "the park writes its marker"
   assert_contains "$(cat "$dir/state/worker-park.log")" "t1 parked" "the park is logged"
   pass "a done worker is parked through the idle-only exit once its grace elapses"
 }
@@ -241,7 +240,6 @@ test_steer_unparks_the_worker() {
   assert_contains "$(control_log "$dir")" "t1 relaunch --note" "an unread steer relaunches the parked worker"$'\n'"$out"
   assert_contains "$(control_log "$dir")" "inbox" "the relaunch note says why"
   assert_absent "$dir/state/t1.worker-park" "an unpark retires the marker"
-  assert_equals "not parked" "$(run_park "$dir" status t1)" "the worker reads unparked"
   pass "an unread steer relaunches a parked worker and retires its marker"
 }
 
@@ -333,17 +331,29 @@ test_relaunch_by_hand_invalidates_the_marker() {
   local dir
   dir=$(parked_home stale-marker)
   sed -i.bak 's/^spawn_gen=.*/spawn_gen=s-manual/' "$dir/state/t1.meta"
-  assert_equals "not parked" "$(run_park "$dir" status t1)" "a new incarnation is not parked"
+  mkdir -p "$dir/state/t1.inbox"
+  printf 'schema=fm-task-inbox.v1\n--\nfix it\n' > "$dir/state/t1.inbox/001.msg"
+  run_park "$dir" scan >/dev/null
+  assert_equals "" "$(control_log "$dir")" "a new incarnation is not relaunched as a parked worker"
+  assert_absent "$dir/state/t1.worker-park" "the earlier incarnation's marker is retired"
   pass "a marker from an earlier incarnation is not honored"
 }
 
-# A gh stub that answers every PR read with stub/pr.json.
+# A gh stub that answers every GraphQL PR read with stub/pr.json.
 gh_stub() {  # <fakebin>
   cat > "$1/gh" <<'SH'
 #!/usr/bin/env bash
+[ "$1 $2" = "api graphql" ] || exit 1
 cat "$FM_TEST_STUB/pr.json"
 SH
   chmod +x "$1/gh"
+}
+
+# pr_json <home> <state> <mergeable> <review-decision> <check-nodes> <review-nodes> <comment-nodes>
+# writes the GitHub GraphQL answer the gh stub serves.
+pr_json() {
+  printf '{"data":{"repository":{"pullRequest":{"state":"%s","mergeable":"%s","reviewDecision":%s,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":%s}}}}]},"reviews":{"nodes":%s},"comments":{"nodes":%s}}}}}' \
+    "$2" "$3" "$4" "$5" "$6" "$7" > "$1/stub/pr.json"
 }
 
 test_pr_activity_unparks() {
@@ -352,35 +362,36 @@ test_pr_activity_unparks() {
   fb="$dir/stub/fakebin"
   mkdir -p "$fb"
   gh_stub "$fb"
-  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[{"conclusion":"SUCCESS"}],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+  pr_json "$dir" OPEN MERGEABLE null '[{"conclusion":"SUCCESS"}]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "a green quiet PR leaves the worker parked"
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "an unchanged PR leaves the worker parked"
-  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[{"conclusion":"FAILURE"}],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+  pr_json "$dir" OPEN MERGEABLE null '[{"conclusion":"SUCCESS"},{"state":"FAILURE"}]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_contains "$(control_log "$dir")" "failed check" "a newly red PR relaunches the worker"
   pass "a parked worker's PR going red relaunches it"
 }
 
 test_pr_review_and_conflict_unpark() {
-  local dir fb case_ json want
-  while IFS='|' read -r case_ json want; do
+  local dir fb case_ mergeable decision reviews comments want
+  while IFS='|' read -r case_ mergeable decision reviews comments want; do
     dir=$(parked_home "pr-$case_")
     fb="$dir/stub/fakebin"
     mkdir -p "$fb"
     gh_stub "$fb"
-    printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+    pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
     PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-    printf '%s' "$json" > "$dir/stub/pr.json"
+    pr_json "$dir" OPEN "$mergeable" "$decision" '[]' "$reviews" "$comments"
     PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
     assert_contains "$(control_log "$dir")" "$want" "$case_ relaunches the parked worker"
   done <<'EOF'
-changes|{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[],"reviews":[{}],"comments":[]}|changes-requested
-conflict|{"state":"OPEN","mergeable":"CONFLICTING","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[]}|merge conflict
-comment|{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[{}]}|new reviews or comments
+changes|MERGEABLE|"CHANGES_REQUESTED"|[{"state":"CHANGES_REQUESTED","author":{"__typename":"User"}}]|[]|changes-requested
+conflict|CONFLICTING|null|[]|[]|merge conflict
+comment|MERGEABLE|null|[]|[{"author":{"__typename":"User"}}]|new reviews or comments
+review|MERGEABLE|null|[{"state":"COMMENTED","author":{"__typename":"User"}}]|[]|new reviews or comments
 EOF
-  pass "review findings, a merge conflict, and new comments each relaunch a parked worker"
+  pass "review findings, a merge conflict, and new human reviews or comments each relaunch a parked worker"
 }
 
 test_merged_pr_stays_parked() {
@@ -389,26 +400,33 @@ test_merged_pr_stays_parked() {
   fb="$dir/stub/fakebin"
   mkdir -p "$fb"
   gh_stub "$fb"
-  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-  printf '{"state":"MERGED","mergeable":"UNKNOWN","reviewDecision":"","statusCheckRollup":[],"reviews":[{}],"comments":[{}]}' > "$dir/stub/pr.json"
+  pr_json "$dir" MERGED UNKNOWN null '[]' '[{"state":"COMMENTED","author":{"__typename":"User"}}]' '[{"author":{"__typename":"User"}}]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "a merged PR leaves the worker parked for cleanup"
   pass "a merged PR leaves a parked worker parked"
 }
 
-test_approval_and_bot_comment_do_not_unpark() {
-  local dir fb
+# GitHub App logins carry no "[bot]" suffix (github-actions, coderabbitai); only
+# the author type marks them, on comments and reviews alike.
+test_approval_and_bot_activity_do_not_unpark() {
+  local dir fb bot_reviews bot_comments
   dir=$(parked_home pr-quiet)
   fb="$dir/stub/fakebin"
   mkdir -p "$fb"
   gh_stub "$fb"
-  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[],"reviews":[],"comments":[]}' > "$dir/stub/pr.json"
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-  printf '{"state":"OPEN","mergeable":"MERGEABLE","reviewDecision":"APPROVED","statusCheckRollup":[],"reviews":[{"state":"APPROVED"}],"comments":[{"author":{"login":"ci-helper[bot]"}}]}' > "$dir/stub/pr.json"
+  bot_reviews='{"state":"APPROVED","author":{"__typename":"User","login":"reviewer"}},{"state":"COMMENTED","author":{"__typename":"Bot","login":"coderabbitai"}}'
+  bot_comments='{"author":{"__typename":"Bot","login":"github-actions"}},{"author":{"__typename":"Bot","login":"vercel"}}'
+  pr_json "$dir" OPEN MERGEABLE '"APPROVED"' '[]' "[$bot_reviews]" "[$bot_comments]"
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-  assert_equals "" "$(control_log "$dir")" "an approval and a bot comment leave the worker parked"
-  pass "an approving review or a bot comment does not relaunch a parked worker"
+  assert_equals "" "$(control_log "$dir")" "an approval and bot reviews and comments leave the worker parked"
+  pr_json "$dir" OPEN MERGEABLE '"APPROVED"' '[]' "[$bot_reviews]" "[$bot_comments,{\"author\":{\"__typename\":\"User\",\"login\":\"captain\"}}]"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  assert_contains "$(control_log "$dir")" "new reviews or comments" "a human comment after bot activity still relaunches the worker"
+  pass "an approving review or bot activity does not relaunch a parked worker; a human comment does"
 }
 
 # --- fm-send and the watcher's readers -------------------------------------
@@ -503,7 +521,7 @@ test_relaunch_by_hand_invalidates_the_marker
 test_pr_activity_unparks
 test_pr_review_and_conflict_unpark
 test_merged_pr_stays_parked
-test_approval_and_bot_comment_do_not_unpark
+test_approval_and_bot_activity_do_not_unpark
 test_fm_send_to_a_parked_worker_starts_the_unpark
 test_crew_state_reports_a_parked_worker_as_waiting
 test_fm_send_refuses_a_typed_command_to_a_parked_worker

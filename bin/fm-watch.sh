@@ -3006,10 +3006,14 @@ EOF
     # A parked worker's agent was stopped on purpose while its task waits, so
     # its quiet pane is healthy: no stale, wedge, or dead-record wake. Its
     # unread steer belongs to the unpark path unless that unpark was refused,
-    # when the ordinary unavailable-endpoint escalation reports it.
+    # when the ordinary unavailable-endpoint escalation reports it. A declared
+    # paused or captain-held wait keeps its long-cadence recheck.
     if [ -n "$task" ] && fm_worker_park_valid "$STATE" "$task"; then
       if fm_worker_park_unpark_refused "$STATE" "$task"; then
         inbox_steer_check "$w" "$task"
+      fi
+      if status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")"; then
+        handle_paused_stale "$w" "$task" worker-park
       fi
       continue
     fi

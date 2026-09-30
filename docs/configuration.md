@@ -601,7 +601,7 @@ The flag is a home-local supervision-noise preference and is not inherited by se
 Each firstmate home stops the agent of an ordinary ship or scout worker that has been waiting for a grace period, and relaunches it when its next step needs it, so idle workers hold no memory.
 A worker is waiting when it has finished (a scout report, or a PR that only awaits merge), declared a `paused:` wait, or is waiting on a decision (`needs-decision`, `blocked`, or a captain-held transfer).
 A busy worker, one whose validation run is still active or parked at a gate, and one with an unread steer are never parked.
-Parking keeps the endpoint, local copy, branch, inbox, and instructions, and a parked worker is relaunched when a steer is sent to it, when its validation run stops at a gate or fails, when its GitHub PR newly shows a failed check, a changes-requested review, a merge conflict, or new non-approval reviews or human comments, or when the `until` time of the wait it declared passes.
+Parking keeps the endpoint, local copy, branch, inbox, and instructions, and a parked worker is relaunched when a steer is sent to it, when its validation run stops at a gate or fails, when its GitHub PR newly shows a failed check, a changes-requested review, a merge conflict, or new non-approval reviews or comments by authors other than bots, or when the `until` time of the wait it declared passes.
 Secondmates, remote placements, backends other than tmux and Herdr, and tasks under a supervision lease are never parked; a secondmate running this code parks its own workers the same way.
 
 ### Turn it off or change the grace
