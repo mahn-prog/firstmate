@@ -386,10 +386,10 @@ test_pr_review_and_conflict_unpark() {
     PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
     assert_contains "$(control_log "$dir")" "$want" "$case_ relaunches the parked worker"
   done <<'EOF'
-changes|MERGEABLE|"CHANGES_REQUESTED"|[{"state":"CHANGES_REQUESTED","author":{"__typename":"User"}}]|[]|changes-requested
+changes|MERGEABLE|"CHANGES_REQUESTED"|[{"state":"CHANGES_REQUESTED","createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]|[]|changes-requested
 conflict|CONFLICTING|null|[]|[]|merge conflict
-comment|MERGEABLE|null|[]|[{"author":{"__typename":"User"}}]|new reviews or comments
-review|MERGEABLE|null|[{"state":"COMMENTED","author":{"__typename":"User"}}]|[]|new reviews or comments
+comment|MERGEABLE|null|[]|[{"createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]|new reviews or comments
+review|MERGEABLE|null|[{"state":"COMMENTED","createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]|[]|new reviews or comments
 EOF
   pass "review findings, a merge conflict, and new human reviews or comments each relaunch a parked worker"
 }
@@ -402,7 +402,7 @@ test_merged_pr_stays_parked() {
   gh_stub "$fb"
   pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-  pr_json "$dir" MERGED UNKNOWN null '[]' '[{"state":"COMMENTED","author":{"__typename":"User"}}]' '[{"author":{"__typename":"User"}}]'
+  pr_json "$dir" MERGED UNKNOWN null '[]' '[{"state":"COMMENTED","createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]' '[{"createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "a merged PR leaves the worker parked for cleanup"
   pass "a merged PR leaves a parked worker parked"
@@ -418,15 +418,44 @@ test_approval_and_bot_activity_do_not_unpark() {
   gh_stub "$fb"
   pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
-  bot_reviews='{"state":"APPROVED","author":{"__typename":"User","login":"reviewer"}},{"state":"COMMENTED","author":{"__typename":"Bot","login":"coderabbitai"}}'
-  bot_comments='{"author":{"__typename":"Bot","login":"github-actions"}},{"author":{"__typename":"Bot","login":"vercel"}}'
+  bot_reviews='{"state":"APPROVED","createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User","login":"reviewer"}},{"state":"COMMENTED","createdAt":"2026-09-29T10:01:00Z","author":{"__typename":"Bot","login":"coderabbitai"}}'
+  bot_comments='{"createdAt":"2026-09-29T10:02:00Z","author":{"__typename":"Bot","login":"github-actions"}},{"createdAt":"2026-09-29T10:03:00Z","author":{"__typename":"Bot","login":"vercel"}}'
   pr_json "$dir" OPEN MERGEABLE '"APPROVED"' '[]' "[$bot_reviews]" "[$bot_comments]"
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_equals "" "$(control_log "$dir")" "an approval and bot reviews and comments leave the worker parked"
-  pr_json "$dir" OPEN MERGEABLE '"APPROVED"' '[]' "[$bot_reviews]" "[$bot_comments,{\"author\":{\"__typename\":\"User\",\"login\":\"captain\"}}]"
+  pr_json "$dir" OPEN MERGEABLE '"APPROVED"' '[]' "[$bot_reviews]" "[$bot_comments,{\"createdAt\":\"2026-09-29T10:04:00Z\",\"author\":{\"__typename\":\"User\",\"login\":\"captain\"}}]"
   PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
   assert_contains "$(control_log "$dir")" "new reviews or comments" "a human comment after bot activity still relaunches the worker"
   pass "an approving review or bot activity does not relaunch a parked worker; a human comment does"
+}
+
+# comment_nodes <first-minute> <count> <kind>... writes comma-joined comment
+# nodes, one per minute from 10:<first-minute>, cycling through the author kinds.
+comment_nodes() {
+  local first=$1 count=$2 i out='' kind
+  shift 2
+  local kinds=("$@")
+  for ((i = 0; i < count; i++)); do
+    kind=${kinds[$((i % ${#kinds[@]}))]}
+    out+="${out:+,}{\"createdAt\":\"2026-09-29T$(printf '%02d:%02d' $(((first + i) / 60 + 10)) $(((first + i) % 60))):00Z\",\"author\":{\"__typename\":\"$kind\"}}"
+  done
+  printf '%s' "$out"
+}
+
+# The PR read sees only the last 100 comments; a new human comment must wake the
+# worker even when bot comments push older human comments out of that window.
+test_full_comment_window_still_sees_new_human_comment() {
+  local dir fb
+  dir=$(parked_home pr-window)
+  fb="$dir/stub/fakebin"
+  mkdir -p "$fb"
+  gh_stub "$fb"
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' "[$(comment_nodes 0 60 User),$(comment_nodes 60 40 Bot)]"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' "[$(comment_nodes 6 54 User),$(comment_nodes 60 40 Bot),$(comment_nodes 100 5 Bot),$(comment_nodes 105 1 User)]"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  assert_contains "$(control_log "$dir")" "new reviews or comments" "a new human comment in a full window relaunches the worker"
+  pass "a new human comment wakes a parked worker even as older comments leave the last-100 window"
 }
 
 # --- fm-send and the watcher's readers -------------------------------------
@@ -522,6 +551,7 @@ test_pr_activity_unparks
 test_pr_review_and_conflict_unpark
 test_merged_pr_stays_parked
 test_approval_and_bot_activity_do_not_unpark
+test_full_comment_window_still_sees_new_human_comment
 test_fm_send_to_a_parked_worker_starts_the_unpark
 test_crew_state_reports_a_parked_worker_as_waiting
 test_fm_send_refuses_a_typed_command_to_a_parked_worker

@@ -21,8 +21,8 @@
 #     record, when the `until <UTC>` time of the wait it was parked on has
 #     passed, when its validation run reads parked at a gate or failed, or
 #     when its GitHub PR newly shows a failed check, a changes-requested
-#     review, a merge conflict, or more non-approval reviews and comments by
-#     authors other than bots than at its first read after parking. The run and PR are read
+#     review, a merge conflict, or a non-approval review or comment by an
+#     author other than a bot newer than any at its first read after parking. The run and PR are read
 #     at most every FM_WORKER_PARK_PR_SECS per task. A merged or closed PR
 #     leaves it parked for cleanup.
 #   - Any other worker is parked when parking is on, its inbox is empty, and
@@ -277,16 +277,17 @@ PR_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
       state mergeable reviewDecision
       commits(last: 1) { nodes { commit { statusCheckRollup { contexts(last: 100) {
         nodes { ... on CheckRun { conclusion } ... on StatusContext { state } } } } } } }
-      reviews(last: 100) { nodes { state author { __typename } } }
-      comments(last: 100) { nodes { author { __typename } } }
+      reviews(last: 100) { nodes { state createdAt author { __typename } } }
+      comments(last: 100) { nodes { createdAt author { __typename } } }
     }
   }
 }'
 
 # Prints the unpark reason when the parked worker's PR newly needs it. Counts one
-# read (the caller counts it). New activity counts reviews other than approvals
-# and comments, from authors other than bots, so an approval or a bot note does
-# not wake the worker.
+# read (the caller counts it). Activity is the newest review other than an
+# approval or comment from an author other than a bot, so an approval or a bot
+# note does not wake the worker, and older items leaving the last-100 window
+# cannot hide a new one.
 pr_reason() {  # <id>
   local id=$1 url f json now_flags red changes conflict activity open
   local b_red b_changes b_conflict b_activity
@@ -303,7 +304,7 @@ pr_reason() {  # <id>
         (if .reviewDecision == "CHANGES_REQUESTED" then 1 else 0 end),
         (if .mergeable == "CONFLICTING" then 1 else 0 end),
         ([(.reviews.nodes[]? | select(.state != "APPROVED")), .comments.nodes[]?
-          | select(.author.__typename != "Bot")] | length) ] | @tsv' 2>/dev/null) || return 1
+          | select(.author.__typename != "Bot") | .createdAt // empty] | max // "0") ] | @tsv' 2>/dev/null) || return 1
   IFS=$'\t' read -r open red changes conflict activity <<< "$now_flags"
   [ -n "${activity:-}" ] || return 1
   if [ ! -f "$f" ]; then
@@ -316,7 +317,7 @@ pr_reason() {  # <id>
   if [ "$red" = 1 ] && [ "${b_red:-0}" != 1 ]; then printf 'its PR %s has a failed check' "$url"; return 0; fi
   if [ "$changes" = 1 ] && [ "${b_changes:-0}" != 1 ]; then printf 'its PR %s has a changes-requested review' "$url"; return 0; fi
   if [ "$conflict" = 1 ] && [ "${b_conflict:-0}" != 1 ]; then printf 'its PR %s has a merge conflict' "$url"; return 0; fi
-  if [ "$activity" -gt "$(num "${b_activity:-}" 0)" ]; then printf 'its PR %s has new reviews or comments' "$url"; return 0; fi
+  if [[ $activity > ${b_activity:-0} ]]; then printf 'its PR %s has new reviews or comments' "$url"; return 0; fi
   return 1
 }
 
