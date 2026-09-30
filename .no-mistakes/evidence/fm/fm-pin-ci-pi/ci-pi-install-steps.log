@@ -1,0 +1,27 @@
+workflow-level env: {'PI_CODING_AGENT_VERSION': '0.87.1'}
+
+== job tests-portable-parallel-1: step 'Install the Pi package for the Pi extension tests' (prefix /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-4d9ynl36)
+added 144 packages in 26s
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-4d9ynl36/lib -> ./
+└── @earendil-works/pi-coding-agent@0.87.1
+warn install-scripts 3 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   @google/genai@2.21.0 (preinstall: echo 'preinstall: no-op')
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn install-scripts
+npm warn install-scripts Run `npm install -g --allow-scripts=@google/genai,esbuild,protobufjs` to allow these scripts once, or `npm config set allow-scripts=@google/genai,esbuild,protobufjs --location=user` to allow them for all global installs.
+exit=0 installed_version=0.87.1
+
+== job tests-portable-serial: step 'Install the Pi package for the Pi extension tests' (prefix /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-59app262)
+added 144 packages in 24s
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-59app262/lib -> ./
+└── @earendil-works/pi-coding-agent@0.87.1
+warn install-scripts 3 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   @google/genai@2.21.0 (preinstall: echo 'preinstall: no-op')
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn install-scripts
+npm warn install-scripts Run `npm install -g --allow-scripts=@google/genai,esbuild,protobufjs` to allow these scripts once, or `npm config set allow-scripts=@google/genai,esbuild,protobufjs --location=user` to allow them for all global installs.
+exit=0 installed_version=0.87.1
+
+SUMMARY [["tests-portable-parallel-1", 0, "0.87.1", "/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-4d9ynl36"], ["tests-portable-serial", 0, "0.87.1", "/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-59app262"]]

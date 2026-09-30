@@ -1,0 +1,15 @@
+workflow-level env: {}
+
+== job tests-portable-parallel-1: step 'Install the Pi package for the Pi extension tests' (prefix /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-h1zx54dj)
+added 147 packages in 20s
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-h1zx54dj/lib -> ./
+└── @earendil-works/pi-coding-agent@0.99.1
+exit=0 installed_version=0.99.1
+
+== job tests-portable-serial: step 'Install the Pi package for the Pi extension tests' (prefix /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-thbiankr)
+added 147 packages in 22s
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-thbiankr/lib -> ./
+└── @earendil-works/pi-coding-agent@0.99.1
+exit=0 installed_version=0.99.1
+
+SUMMARY [["tests-portable-parallel-1", 0, "0.99.1", "/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-parallel-1-h1zx54dj"], ["tests-portable-serial", 0, "0.99.1", "/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/pi-tests-portable-serial-thbiankr"]]

@@ -1,0 +1,10 @@
+ok - the installed Pi still bounds the picker's list and ranks its search
+not ok - branch dispatch, prefix contract, and two-stage filter must hold: <anonymous_script>:217
+  throw new Error(`timed out waiting for ${label}`);
+        ^
+
+Error: timed out waiting for branch wake prompt
+    at settle (eval at <anonymous> (file:///private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-pin-copy.NccjCo/[eval1]:2:7), <anonymous>:217:9)
+    at async file:///private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-pin-copy.NccjCo/[eval1]:16:1
+
+Node.js v25.9.0: expected exit 0, got 1
