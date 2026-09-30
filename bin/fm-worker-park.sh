@@ -341,7 +341,7 @@ run_reason() {  # <id>
 checks_due() {  # <id>
   local f="$STATE/$1.worker-park-checked"
   [ -f "$f" ] || return 0
-  [ $((NOW - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0))) -ge "$PR_SECS" ]
+  [ $((NOW - $(fm_path_mtime "$f" || echo 0))) -ge "$PR_SECS" ]
 }
 
 # --- scan -------------------------------------------------------------------
