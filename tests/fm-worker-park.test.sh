@@ -474,6 +474,24 @@ test_late_submitted_review_unparks() {
   pass "a review started before the baseline but submitted after it wakes a parked worker"
 }
 
+# A PR reason the scan cannot act on (its action budget is spent) must not move
+# the baseline, or the next read would find nothing new and drop it for good.
+test_deferred_pr_reason_is_retried() {
+  local dir fb
+  dir=$(parked_home pr-deferred)
+  fb="$dir/stub/fakebin"
+  mkdir -p "$fb"
+  gh_stub "$fb"
+  pr_json "$dir" OPEN MERGEABLE null '[]' '[]' '[]'
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  pr_json "$dir" OPEN MERGEABLE '"CHANGES_REQUESTED"' '[]' '[{"state":"CHANGES_REQUESTED","createdAt":"2026-09-29T10:00:00Z","author":{"__typename":"User"}}]' '[]'
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 FM_WORKER_PARK_MAX_ACTIONS=0 run_park "$dir" scan >/dev/null
+  assert_equals "" "$(control_log "$dir")" "a spent action budget defers the unpark"
+  PATH="$fb:$PATH" FM_WORKER_PARK_PR_SECS=0 run_park "$dir" scan >/dev/null
+  assert_contains "$(control_log "$dir")" "changes-requested" "the deferred PR reason relaunches the worker once the budget allows"
+  pass "a PR reason deferred by a spent action budget unparks the worker on a later scan"
+}
+
 # --- fm-send and the watcher's readers -------------------------------------
 
 # A tmux stub whose only pane holds a shell: the parked worker's agent is gone.
@@ -569,6 +587,7 @@ test_merged_pr_stays_parked
 test_approval_and_bot_activity_do_not_unpark
 test_full_comment_window_still_sees_new_human_comment
 test_late_submitted_review_unparks
+test_deferred_pr_reason_is_retried
 test_fm_send_to_a_parked_worker_starts_the_unpark
 test_crew_state_reports_a_parked_worker_as_waiting
 test_fm_send_refuses_a_typed_command_to_a_parked_worker

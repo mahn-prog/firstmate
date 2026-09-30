@@ -289,7 +289,8 @@ PR_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
 # than an approval or comment from an author other than a bot, so an approval or
 # a bot note does not wake the worker, older items leaving the last-100 window
 # cannot hide a new one, and a review started long before it was submitted
-# still counts as new.
+# still counts as new. The baseline moves only on a read with no reason, so a
+# reason the scan could not act on is found again by the next read.
 pr_reason() {  # <id>
   local id=$1 url f json now_flags red changes conflict activity open
   local b_red b_changes b_conflict b_activity
@@ -315,12 +316,13 @@ pr_reason() {  # <id>
     return 1
   fi
   read -r b_red b_changes b_conflict b_activity < "$f" || true
+  if [ "$open" = 1 ]; then
+    if [ "$red" = 1 ] && [ "${b_red:-0}" != 1 ]; then printf 'its PR %s has a failed check' "$url"; return 0; fi
+    if [ "$changes" = 1 ] && [ "${b_changes:-0}" != 1 ]; then printf 'its PR %s has a changes-requested review' "$url"; return 0; fi
+    if [ "$conflict" = 1 ] && [ "${b_conflict:-0}" != 1 ]; then printf 'its PR %s has a merge conflict' "$url"; return 0; fi
+    if [[ $activity > ${b_activity:-0} ]]; then printf 'its PR %s has new reviews or comments' "$url"; return 0; fi
+  fi
   printf '%s %s %s %s\n' "$red" "$changes" "$conflict" "$activity" > "$f"
-  [ "$open" = 1 ] || return 1
-  if [ "$red" = 1 ] && [ "${b_red:-0}" != 1 ]; then printf 'its PR %s has a failed check' "$url"; return 0; fi
-  if [ "$changes" = 1 ] && [ "${b_changes:-0}" != 1 ]; then printf 'its PR %s has a changes-requested review' "$url"; return 0; fi
-  if [ "$conflict" = 1 ] && [ "${b_conflict:-0}" != 1 ]; then printf 'its PR %s has a merge conflict' "$url"; return 0; fi
-  if [[ $activity > ${b_activity:-0} ]]; then printf 'its PR %s has new reviews or comments' "$url"; return 0; fi
   return 1
 }
 
