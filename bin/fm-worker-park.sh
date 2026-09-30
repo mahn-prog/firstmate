@@ -271,6 +271,7 @@ unpark() {  # <id> <reason>
 
 # The GraphQL read behind pr_reason: author types expose bots, whose GitHub App
 # logins carry no marker of their own.
+# shellcheck disable=SC2016 # $owner etc. are GraphQL variables, not shell expansions.
 PR_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
