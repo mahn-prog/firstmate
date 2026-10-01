@@ -259,6 +259,8 @@ fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-worker-park-lib.sh
+. "$SCRIPT_DIR/fm-worker-park-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -889,6 +891,12 @@ else
       esac
     fi
   fi
+  # A parked worker's pane holds a shell, so typed text would run there.
+  if [ "$INBOX_PLANE" = 0 ] && [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] \
+    && fm_worker_park_valid "$STATE" "$(fm_send_id_from_meta "$TARGET_META")"; then
+    echo "error: $(fm_send_id_from_meta "$TARGET_META")'s worker is parked (its agent is stopped), so a typed command would reach a shell; send ordinary text, which relaunches it, and retry the command after it is back" >&2
+    exit 1
+  fi
   if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" = remote ]; then
     # Remote inbox leg: the message becomes a durable record in the remote
     # home's steering inbox, written idempotently by the host-local leg, then
@@ -1088,7 +1096,19 @@ else
     case "$ring_rc" in
     1) echo "fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and the watcher will re-ring" >&2 ;;
     2) echo "fm-send: doorbell did not reach $T; the steer is durably recorded at $INBOX_RECORD and the watcher will re-ring" >&2 ;;
-    3) echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2 ;;
+    3)
+      # A parked worker's agent was stopped on purpose: the steer is its cue
+      # to come back, so start the unpark (bin/fm-worker-park.sh) detached
+      # rather than hold this send for a relaunch; the park scan is the
+      # backstop if this start is lost.
+      if fm_worker_park_valid "$STATE" "$INBOX_TASK_ID"; then
+        FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" nohup "$SCRIPT_DIR/fm-worker-park.sh" unpark "$INBOX_TASK_ID" \
+          --reason "a firstmate instruction was sent to its inbox" </dev/null >/dev/null 2>&1 &
+        echo "fm-send: $INBOX_TASK_ID's worker was parked; the steer is durably recorded at $INBOX_RECORD and the worker is being relaunched to read it" >&2
+      else
+        echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2
+      fi
+      ;;
     esac
     exit 0
   fi

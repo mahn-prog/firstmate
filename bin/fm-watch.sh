@@ -187,6 +187,9 @@ WATCH_HOME_EXISTED=0
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# The worker-park records (a parked worker's stopped agent is not a wake).
+# shellcheck source=bin/fm-worker-park-lib.sh
+. "$SCRIPT_DIR/fm-worker-park-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -1976,6 +1979,15 @@ scan_signals() {
       *.status) fm_wake_signal_seen_current "$STATE" "$f" && continue ;;
       *) [ "$sig" = "$(cat "$sf" 2>/dev/null)" ] && continue ;;
     esac
+    # Stopping a parked worker's agent can end its turn; that is not a wake.
+    case "$f" in
+      *.turn-ended)
+        if fm_worker_park_valid "$STATE" "$(basename "$f" .turn-ended)"; then
+          printf '%s' "$sig" > "$sf"
+          continue
+        fi
+        ;;
+    esac
     printf '%s\t%s\t%s\n' "$sf" "$sig" "$f"
   done
   return 0
@@ -2453,6 +2465,30 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
+# Worker parking (bin/fm-worker-park.sh owns the policy): started detached so a
+# slow stop or relaunch never delays wake delivery, at most once per
+# FM_WORKER_PARK_SCAN_SECS, and only while this home records any task.
+WORKER_PARK_PID=
+WORKER_PARK_SCAN_SECS=${FM_WORKER_PARK_SCAN_SECS:-60}
+case "$WORKER_PARK_SCAN_SECS" in ''|*[!0-9]*) WORKER_PARK_SCAN_SECS=60 ;; esac
+worker_park_scan_detached() {
+  local meta
+  [ "$(age_of "$STATE/.last-worker-park-scan")" -ge "$WORKER_PARK_SCAN_SECS" ] || return 0
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] && break
+    return 0
+  done
+  if [ -n "$WORKER_PARK_PID" ]; then
+    kill -0 "$WORKER_PARK_PID" 2>/dev/null && return 0
+    wait "$WORKER_PARK_PID" 2>/dev/null || true
+    WORKER_PARK_PID=
+  fi
+  touch "$STATE/.last-worker-park-scan"
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-worker-park.sh" scan </dev/null >/dev/null 2>&1 &
+  WORKER_PARK_PID=$!
+}
+
 RECONCILE_REQUEST_PID=
 reconcile_requests_pending() {
   local request
@@ -2644,6 +2680,8 @@ while :; do
   if reconcile_requests_pending; then
     reconcile_requests_detached
   fi
+
+  worker_park_scan_detached
 
   # Parent-owned secondmate pending-reply reconciliation: resolve correlated
   # parent reports, observe backend busy/idle turn completion, send one recovery
@@ -2965,6 +3003,20 @@ EOF
   while IFS= read -r w; do
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
+    # A parked worker's agent was stopped on purpose while its task waits, so
+    # its quiet pane is healthy: no stale, wedge, or dead-record wake. Its
+    # unread steer belongs to the unpark path unless that unpark was refused,
+    # when the ordinary unavailable-endpoint escalation reports it. A declared
+    # paused or captain-held wait keeps its long-cadence recheck.
+    if [ -n "$task" ] && fm_worker_park_valid "$STATE" "$task"; then
+      if fm_worker_park_unpark_refused "$STATE" "$task"; then
+        inbox_steer_check "$w" "$task"
+      fi
+      if status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")"; then
+        handle_paused_stale "$w" "$task" worker-park
+      fi
+      continue
+    fi
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
     [ -z "$task" ] || inbox_steer_check "$w" "$task"

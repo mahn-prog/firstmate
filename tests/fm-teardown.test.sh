@@ -727,6 +727,25 @@ test_teardown_closes_the_backlog_item_itself() {
   pass "teardown closes its own backlog item before reporting success"
 }
 
+test_teardown_of_a_parked_worker_retires_its_park_records() {
+  local case_dir out suffix
+  case_dir=$(make_case parked-worker)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=\nparked_at=1\nstate=done\n' > "$case_dir/state/task-x1.worker-park"
+  for suffix in -watch -refused -pr -checked; do
+    : > "$case_dir/state/task-x1.worker-park$suffix"
+  done
+
+  out=$(run_teardown "$case_dir") || fail "teardown of a parked worker failed: $out"
+  for suffix in '' -watch -refused -pr -checked; do
+    assert_absent "$case_dir/state/task-x1.worker-park$suffix" \
+      "teardown left the park record task-x1.worker-park$suffix behind"
+  done
+  pass "teardown of a parked worker lands unchanged and retires every park record"
+}
+
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
   local case_dir out backlog_path
   case_dir=$(make_case tasks-axi-manual-optout)
@@ -4066,6 +4085,7 @@ test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
+test_teardown_of_a_parked_worker_retires_its_park_records
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

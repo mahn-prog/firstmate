@@ -148,6 +148,9 @@
 #      backend's pane busy state, then the resolved status declaration
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail.
+#   4b. A parked worker (bin/fm-worker-park-lib.sh), with no run attributed,
+#      reads its status declaration with a `worker parked since ...` detail
+#      and never the agent-gone verdict step 5 gives an agent-less pane.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log. On tmux and herdr, which own a
@@ -183,6 +186,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-worker-park-lib.sh
+. "$SCRIPT_DIR/fm-worker-park-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -1233,6 +1238,19 @@ fi
 # both classifier-backed backends (tmux and herdr) - and every death-class
 # verdict reports unknown rather than trusting a possibly-stale status log as
 # the current state.
+# A parked worker (bin/fm-worker-park-lib.sh) had its agent stopped on purpose
+# while its task waits, so its agent-less pane is not death evidence: its
+# current state is the declaration it was parked on, named as parked.
+if [ "$KIND" != secondmate ] && fm_worker_park_valid "$STATE" "$ID"; then
+  PARK_NOTE=$(fm_worker_park_describe "$STATE" "$ID")
+  [ "$LOG_VERB" != "done" ] || emit_ship_status_done "$PARK_NOTE"
+  if status_is_captain_held "$LOG_LINE"; then
+    emit paused status-log "$(status_line_note "$LOG_LINE")${SEP}$PARK_NOTE"
+  fi
+  LOG_STATE=$(map_log_state "$LOG_LINE")
+  emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}$PARK_NOTE"
+fi
+
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
 if ! pane_readable "$BACKEND_TARGET"; then
   # A failed probe is not itself evidence the pane is gone: the herdr CLI can

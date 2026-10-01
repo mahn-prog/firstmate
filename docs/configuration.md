@@ -11,7 +11,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
-| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
+| Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), [Calm preference](#calm-preference-configcalm), and [worker parking](#worker-parking-configworker-park) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
@@ -595,6 +595,28 @@ With the flag absent the wedge timer spends no fold or current-state read for it
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes, which supervise their own crew and own that trade separately.
 
 [`architecture.md`](architecture.md) owns the wait-evidence contract and which records may take the ladder away; `bin/fm-watch.sh`'s `wedge_wait_evidence` owns the exact derivation and its fail-closed boundaries.
+
+## Worker parking (config/worker-park)
+
+Each firstmate home stops the agent of an ordinary ship or scout worker that has been waiting for a grace period, and relaunches it when its next step needs it, so idle workers hold no memory.
+A worker is waiting when it has finished (a scout report, or a PR that only awaits merge), declared a `paused:` wait, or is waiting on a decision (`needs-decision`, `blocked`, or a captain-held transfer).
+A busy worker, one whose validation run is still active or parked at a gate, and one with an unread steer are never parked.
+Parking keeps the endpoint, local copy, branch, inbox, and instructions, and a parked worker is relaunched when a steer is sent to it, when its validation run stops at a gate or fails, when its GitHub PR newly shows a failed check, a changes-requested review, a merge conflict, or new non-approval reviews or comments by authors other than bots, or when the `until` time of the wait it declared passes.
+Secondmates, remote placements, backends other than tmux and Herdr, and tasks under a supervision lease are never parked; a secondmate running this code parks its own workers the same way.
+
+### Turn it off or change the grace
+
+Parking is on by default with a 600-second grace.
+The optional local, gitignored `config/worker-park` file changes that: a first line `off` turns parking off, and a first line of digits sets the grace in seconds.
+Any other first line is logged once and turns parking off until corrected.
+With parking off, workers already parked are still relaunched when their next step needs it.
+`FM_WORKER_PARK_GRACE_SECS` overrides the grace for one process; the other tuning variables are listed in the script's `--help`.
+
+### Where parking shows up
+
+The session-start digest prints `endpoint: parked (...)` for a parked worker, and `bin/fm-crew-state.sh` reports its waiting state with a `worker parked since ...` detail, so neither supervision nor recovery treats it as dead or stuck.
+Every park, relaunch, and refusal is logged to `state/worker-park.log`; a refused park or relaunch leaves the worker as it was and is retried only after a backoff.
+[`bin/fm-worker-park.sh`](../bin/fm-worker-park.sh) owns the policy, bounds, and refusal handling, and [`bin/fm-worker-park-lib.sh`](../bin/fm-worker-park-lib.sh) owns the durable records.
 
 ## Gate defaults (.no-mistakes.yaml)
 
@@ -2267,6 +2289,7 @@ FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tas
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles
+FM_WORKER_PARK_SCAN_SECS=60   # seconds between the watcher's detached worker-park scans (bin/fm-worker-park.sh); see "Worker parking"
 FM_HOME_SUMMARY_INTERVAL=300   # seconds before a live watcher refreshes this home's state/home-summary.json even without a status signal; invalid or zero values use 300
 FM_HOME_SUMMARY_TIMEOUT=60     # seconds bounding the complete best-effort home-summary refresh, including lock acquisition, validation, atomic publication, and worker-side failure logging; invalid or zero values use 60
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # approximate size cap for state/.home-summary-refresh.log before it is trimmed to the newest 200 lines; invalid or zero values use 65536

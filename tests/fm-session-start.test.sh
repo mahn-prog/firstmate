@@ -1399,6 +1399,30 @@ EOF
   pass "tmux endpoint liveness is reported per task: alive for a live window, dead for a gone one"
 }
 
+test_endpoint_parked_worker() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-parked)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux "$fakebin" "fm-sess:live-window"
+
+  printf 'window=fm-sess:parked-window\nkind=ship\nspawn_gen=s1\n' > "$home/state/task-parked.meta"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$home/state/task-parked.worker-park"
+  printf 'window=fm-sess:stale-window\nkind=ship\nspawn_gen=s2\n' > "$home/state/task-stale.meta"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$home/state/task-stale.worker-park"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: parked (backend=tmux window=fm-sess:parked-window - worker parked since" \
+    "a parked worker is reported parked, not dead"
+  assert_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:stale-window)" \
+    "a park marker from an earlier incarnation is not honored"
+
+  pass "session start reports a parked worker as parked and ignores a stale park marker"
+}
+
 test_endpoint_liveness_herdr() {
   local rec root home fakebin out
   rec=$(new_world liveness-herdr)
@@ -2971,6 +2995,7 @@ test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
+test_endpoint_parked_worker
 test_endpoint_liveness_herdr
 test_endpoint_read_death_is_isolated_and_reported
 test_endpoint_read_hang_is_bounded_and_reported

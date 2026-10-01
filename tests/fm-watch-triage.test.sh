@@ -2285,6 +2285,85 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# --- a parked worker's quiet pane is healthy, not a stale wake ----------------
+# The same terminal-status stale pane as above, but the worker was parked
+# (bin/fm-worker-park-lib.sh): its agent was stopped on purpose, so the watcher
+# must neither surface it as stale nor probe it as a dead record.
+test_parked_worker_stale_pane_is_not_a_wake() {
+  local dir state fakebin out capture_file window key pid
+  dir=$(make_case parked-stale); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-done"
+  printf '$ ' > "$capture_file"
+  printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/done.meta"
+  printf 'done: PR https://example.test/pr/3\n' > "$state/done.status"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$state/done.worker-park"
+  printf '%s' "$(seen_sig "$state/done.status")" > "$state/.seen-done_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text '$ ')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's quiet pane: $(cat "$out")"
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's quiet pane: $(cat "$out")"
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_no_grep "stale:" "$out" "a parked worker's pane must not be reported stale"
+  pass "a parked worker's quiet pane is absorbed as healthy, never a stale wake"
+}
+
+# A parked worker's declared paused or captain-held wait still takes the bounded
+# long-cadence recheck, and never a wedge escalation.
+test_parked_worker_declared_wait_is_rechecked() {
+  local dir state fakebin out window pid wait_kind status_line want back
+  while IFS='|' read -r wait_kind status_line want; do
+    dir=$(make_case "parked-recheck-$wait_kind"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"
+    window="test:fm-held"
+    printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/held.meta"
+    printf '%s\n' "$status_line" > "$state/held.status"
+    printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=paused\n' > "$state/held.worker-park"
+    back=$(( $(date +%s) - 500 ))
+    set_mtime "$back" "$state/held.status"
+    printf '%s' "$(seen_sig "$state/held.status")" > "$state/.seen-held_status"
+    PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" \
+      FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    wait_for_exit "$pid" 100 || fail "a parked $wait_kind worker's wait was never rechecked"
+    grep -F "stale: $window" "$out" >/dev/null || fail "the $wait_kind recheck did not print a stale wake: $(cat "$out")"
+    grep -F "$want" "$out" >/dev/null || fail "the $wait_kind recheck lost its declared-wait wording: $(cat "$out")"
+    grep -F "possible wedge" "$out" >/dev/null && fail "a parked $wait_kind worker was treated as a possible wedge"
+  done <<'EOF'
+paused|paused: waiting on the vendor|awaiting external
+captain-held|captain-held: held for the captain|answer the held decision
+EOF
+  pass "a parked worker's paused or captain-held wait keeps its long-cadence recheck"
+}
+
+# Stopping a parked worker's agent can end its turn; that turn-end is not a wake.
+test_parked_worker_turn_end_is_not_a_wake() {
+  local dir state fakebin out window pid
+  dir=$(make_case parked-turnend); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  window="test:fm-done"
+  printf 'window=%s\nkind=ship\nspawn_gen=s1\n' "$window" > "$state/done.meta"
+  printf 'done: PR https://example.test/pr/3\n' > "$state/done.status"
+  printf 'schema=fm-worker-park.v1\nspawn_gen=s1\nparked_at=1\nstate=done\n' > "$state/done.worker-park"
+  printf '%s' "$(seen_sig "$state/done.status")" > "$state/.seen-done_status"
+  : > "$state/done.turn-ended"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's turn-end: $(cat "$out")"
+  wait_poll_cycle "$state" "$pid" || fail "watcher exited for a parked worker's turn-end: $(cat "$out")"
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_no_grep "signal:" "$out" "a parked worker's turn-end must not be a signal wake"
+  pass "a parked worker's turn-end is absorbed, never a signal wake"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -6614,6 +6693,9 @@ test_routine_appends_after_a_classified_event_stay_absorbed
 test_unreadable_status_reports_once_per_file_state
 test_permission_recovery_surfaces_preserved_status
 test_terminal_stale_surfaced
+test_parked_worker_stale_pane_is_not_a_wake
+test_parked_worker_declared_wait_is_rechecked
+test_parked_worker_turn_end_is_not_a_wake
 test_stale_terminal_status_overridden_by_active_run
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_wedge_escalation_marks_demand_deep_inspection_after_threshold
