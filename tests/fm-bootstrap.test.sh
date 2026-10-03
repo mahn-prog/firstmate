@@ -1104,6 +1104,23 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+test_host_profile_mismatch_notice_reaches_bootstrap() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/host-profile"
+  mkdir -p "$case_dir/home/config/host-profiles/codex" "$case_dir/stub"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' claude > "$case_dir/home/config/host-profile"
+  printf '#!/usr/bin/env bash\necho codex\n' > "$case_dir/stub/harness"
+  chmod +x "$case_dir/stub/harness"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_HOST_SWITCH_HARNESS_BIN="$case_dir/stub/harness" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = "HOST_PROFILE: this session runs on codex but the fleet host is claude; to move the whole fleet to codex run: bin/fm-host-switch.sh codex (preview with --dry-run)" ] \
+    || fail "bootstrap should relay the host-switch notice, got: $out"
+  [ "$(cat "$case_dir/home/config/host-profile")" = claude ] || fail "bootstrap must never switch the fleet host"
+  pass "bootstrap relays the host mismatch notice and never switches"
+}
+
 test_crew_dispatch_validation() {
   local label body expect mode case_dir fakebin out child_env n
   n=0
@@ -1267,3 +1284,4 @@ test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
+test_host_profile_mismatch_notice_reaches_bootstrap

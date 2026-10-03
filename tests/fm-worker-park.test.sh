@@ -255,6 +255,19 @@ test_explicit_unpark_and_idempotence() {
   pass "explicit unpark relaunches once and is idempotent"
 }
 
+test_unpark_passes_a_new_profile_and_note_to_the_relaunch() {
+  local dir out rc
+  dir=$(parked_home profile)
+  out=$(run_park "$dir" unpark t1 --reason "host switch" --harness codex --model gpt-sol --effort medium --note-extra "Continue run R1."); rc=$?
+  expect_code 0 "$rc" "unpark with a profile"$'\n'"$out"
+  assert_contains "$(control_log "$dir")" "t1 relaunch --harness codex --model gpt-sol --effort medium --note" "the profile reaches the relaunch"
+  assert_contains "$(control_log "$dir")" "Continue run R1." "the extra note reaches the relaunch note"
+  assert_absent "$dir/state/t1.worker-park" "the park records retire"
+  out=$(run_park "$dir" unpark t1 --reason x --harness); rc=$?
+  expect_code 2 "$rc" "a flag without a value is a usage error"
+  pass "unpark passes a new harness, model, effort and extra note to the relaunch"
+}
+
 test_refused_unpark_is_recorded_for_escalation() {
   local dir out rc
   dir=$(parked_home unpark-refused)
@@ -575,6 +588,7 @@ test_config_off_disables_parking
 test_refused_park_is_logged_once_and_backed_off
 test_steer_unparks_the_worker
 test_explicit_unpark_and_idempotence
+test_unpark_passes_a_new_profile_and_note_to_the_relaunch
 test_refused_unpark_is_recorded_for_escalation
 test_declared_wait_time_unparks
 test_past_wait_time_does_not_cycle
