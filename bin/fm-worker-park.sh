@@ -44,8 +44,8 @@
 #   --note <why>`, then retires the park records. A task that is not parked is
 #   a successful no-op. --harness/--model/--effort pass through to the
 #   relaunch and --note-extra is appended to its note (bin/fm-host-switch.sh
-#   moves a parked worker to another host this way). bin/fm-send.sh starts this detached for a steer to a
-#   parked worker; scan is the backstop.
+#   moves a parked worker to another host this way). bin/fm-send.sh starts
+#   this detached for a steer to a parked worker; scan is the backstop.
 #
 # Refusals: any control-plane refusal leaves the worker as it was, is logged
 #   once to state/worker-park.log, and the same action is not retried by scan

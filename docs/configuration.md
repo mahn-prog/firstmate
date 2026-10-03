@@ -833,24 +833,17 @@ A host profile saves every setting that changes with the host, so switching is o
 
 ### Save and switch
 
-The primary home keeps one profile per host under `config/host-profiles/<host>/`: the secondmate pin, the crew harness, the dispatch profiles, the no-mistakes agent and its argument list, and optional worker tiers.
+The primary home keeps one profile per host under `config/host-profiles/<host>/`: the secondmate pin, the crew harness, the dispatch profiles, the no-mistakes agent and its argument list, and optional worker tiers that keep each worker's reasoning class on the new host.
 `bin/fm-host-switch.sh save <host>` captures the live configuration into a profile while the fleet runs on that host.
-`bin/fm-host-switch.sh <host> --dry-run` prints the exact plan and changes nothing; without `--dry-run` it applies the profile, changes only the reviewer's `agent:` line and that agent's argument list, pushes the inherited settings to secondmate homes, and relaunches each secondmate and worker on the new host.
-Each worker keeps its reasoning tier: the optional `worker-tiers` file maps `strong`, `standard`, and `light` to a harness, model, and effort on that host.
-Every applied switch keeps a record with the previous settings under `state/host-switch/`, and `bin/fm-host-switch.sh verify` lists anything still on another host.
-
-### Validation runs across a switch
-
-A no-mistakes run keeps the agent it started with, so a switch never aborts, forces, or rewrites a run.
-A run still active at the switch finishes on its starting agent; a run that already ended failed or cancelled is continued on the new host by its worker, which follows the run's own sync or custody-recovery step and then reruns from the preserved branch head.
-A recovery that would discard commits is raised as a decision instead of run.
+`bin/fm-host-switch.sh <host> --dry-run` prints the exact plan and changes nothing; without `--dry-run` it applies the profile and relaunches every secondmate and worker on the new host, keeping a record of the previous settings under `state/host-switch/`.
+`bin/fm-host-switch.sh verify` lists anything still on another host.
+A switch never aborts, forces, or rewrites a no-mistakes run: each relaunched worker is told how to continue its own run on the new host.
 
 ### Session start and secondmates
 
 `config/host-profile` names the fleet host last applied, and session start prints a `HOST_PROFILE` notice naming the one command when this session's host differs; it never switches by itself.
-`config/host-profile` and `config/host-worker-tiers` are inherited by secondmate homes, and a secondmate runs the same command in its own home to move only its own workers; the profile directory, the secondmate pin, and the reviewer config stay with the primary.
-Remote secondmates are listed for a manual switch on their host.
-[`bin/fm-host-switch.sh`](../bin/fm-host-switch.sh) owns the file formats, the order of actions, and the exit codes.
+`config/host-profile` and `config/host-worker-tiers` are inherited by secondmate homes, where the same command moves only that home's own workers; the profile directory, the secondmate pin, and the reviewer config stay with the primary.
+[`bin/fm-host-switch.sh`](../bin/fm-host-switch.sh) owns the file formats, the order of actions, the run continuation, and the exit codes.
 
 ## Claude permission mode (config/claude-permission-mode)
 

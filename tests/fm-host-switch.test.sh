@@ -311,7 +311,7 @@ test_failed_run_gets_the_supported_continuation() {
   note=$(note_of "$dir" w1)
   assert_contains "$note" "Your validation run R2 ended failed before the switch. Continue it on codex now" "the worker is told its run ended"
   # shellcheck disable=SC2016 # literal backticks in the expected note
-  assert_contains "$note" 'run `no-mistakes axi sync`; then run `no-mistakes rerun` from the preserved branch head' "sync, then rerun"
+  assert_contains "$note" 'run exactly `no-mistakes axi sync`; then run `no-mistakes rerun` from the preserved branch head' "sync, then rerun"
   assert_contains "$note" "Never abort, force, reset or discard anything." "the note forbids destructive moves"
   pass "a failed run's worker is told to sync and rerun on the new host"
 }
@@ -334,10 +334,11 @@ test_keep_local_recovery_becomes_a_decision() {
   add_worker "$dir" w1 claude opus high
   run_status "$dir" w1 "$(toon R4 failed recover_custody "no-mistakes axi sync --recover --keep-local")"
   out=$(run_switch "$dir" codex)
-  assert_contains "$out" "run R4 failed - recovery would discard commits; worker raises a decision" "the plan flags the discard"
+  assert_contains "$out" "run R4 failed - its next step would discard commits; worker raises a decision" "the plan flags the discard"
   note=$(note_of "$dir" w1)
-  assert_contains "$note" "do NOT run its recovery command" "the worker must not run a discarding recovery"
+  assert_contains "$note" "Do NOT run it and do not rerun" "the worker must not run a discarding recovery"
   assert_contains "$note" "append needs-decision naming run R4" "the worker raises a decision instead"
+  assert_not_contains "$note" "no-mistakes rerun" "a run whose custody was not recovered is never rerun"
   pass "a recovery that would discard commits is escalated, never run"
 }
 
@@ -413,6 +414,72 @@ test_secondmate_home_switches_only_its_own_workers() {
   pass "a secondmate home moves only its own workers, onto the fleet host it inherited"
 }
 
+test_unclassified_run_is_reported_unreadable() {
+  local dir out
+  dir=$(new_home odd-run)
+  add_worker "$dir" w1 claude opus high
+  run_status "$dir" w1 "$(toon R6 mystery sync "no-mistakes axi sync" "outcome: odd")"
+  out=$(run_switch "$dir" codex --dry-run)
+  assert_contains "$out" "run unreadable - worker checks it after relaunch" "a status that is not completed, failed or cancelled is not treated as failed"
+  pass "a run in an unknown state is reported for the worker to check, not continued blindly"
+}
+
+test_started_agent_is_named_for_an_active_run() {
+  local dir out
+  dir=$(new_home started)
+  add_worker "$dir" w1 claude opus high
+  run_status "$dir" w1 "$(toon R7 running continue_active_run "no-mistakes axi status" '  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    review,running,13s,13s,"11s ago: log: claude started pid=1713","1713",starting')"
+  out=$(run_switch "$dir" codex --dry-run)
+  assert_contains "$out" "stays on its start agent (claude)" "the agent named by a starting step is reported"
+  pass "the start agent of an active run is named from a just-started step too"
+}
+
+test_worker_on_a_non_host_harness_is_left_alone() {
+  local dir out
+  dir=$(new_home non-host)
+  add_worker "$dir" w1 grok grok-4 high
+  out=$(run_switch "$dir" codex)
+  assert_contains "$out" "worker w1: on grok, not a host profile; unchanged" "a dispatch-chosen harness is not a host"
+  assert_not_contains "$(calls "$dir")" "[w1]" "the worker is not relaunched"
+  assert_equals "" "$(run_check "$dir" codex)" "check does not flag it either"
+  pass "a worker a dispatch rule sent to another harness is left alone"
+}
+
+test_failed_secondmate_relaunch_skips_its_steer() {
+  local dir out rc=0
+  dir=$(new_home sm-fail)
+  add_secondmate "$dir" sm1
+  echo 1 > "$dir/stub/control-rc"
+  out=$(run_switch "$dir" codex) || rc=$?
+  expect_code 1 "$rc" "a failed secondmate relaunch"
+  assert_contains "$out" "FAILED steer secondmate sm1 to switch its own workers: skipped because its relaunch failed" "the steer is skipped"
+  assert_not_contains "$(calls "$dir")" "send [sm1]" "no steer reaches a secondmate that did not relaunch"
+  pass "a secondmate whose relaunch failed is not steered"
+}
+
+test_profile_without_tiers_keeps_the_dispatch_default_profile() {
+  local dir
+  dir=$(new_home no-tiers)
+  rm "$dir/config/host-profiles/codex/worker-tiers"
+  printf '{"rules":[],"default":[{"harness":"codex","model":"gpt-sol","effort":"medium"},{"harness":"codex"}]}\n' \
+    > "$dir/config/host-profiles/codex/crew-dispatch.json"
+  add_worker "$dir" w1 claude opus high
+  run_switch "$dir" codex >/dev/null
+  assert_contains "$(calls "$dir")" "control [w1] [relaunch] [--harness] [codex] [--model] [gpt-sol] [--effort] [medium]" "an array default still supplies model and effort"
+  pass "a profile without tiers relaunches on its dispatch default, array or not"
+}
+
+test_inline_agent_args_are_refused() {
+  local dir out rc=0
+  dir=$(new_home nm-inline)
+  printf 'agent: claude\nagent_args_override:\n  codex: [--sandbox, workspace-write]\n' > "$dir/nm/config.yaml"
+  out=$(run_switch "$dir" codex) || rc=$?
+  expect_code 2 "$rc" "inline agent args"
+  assert_contains "$out" "structure this switch does not edit" "an inline list is not rewritten"
+  pass "an inline per-agent argument list is refused rather than duplicated"
+}
+
 # --- check (session-start notice) and save -----------------------------------
 
 run_check() {  # <home> <session host> [args...]
@@ -439,7 +506,9 @@ test_check_names_the_one_command_on_a_host_mismatch() {
   rm -rf "$dir/config/host-profiles/codex"
   assert_contains "$(run_check "$dir" codex)" "no codex profile is saved; save one while the fleet runs on codex (bin/fm-host-switch.sh save codex)" "a missing profile names the save step"
   rm "$dir/config/host-profile"
-  assert_equals "" "$(run_check "$dir" codex)" "a home with no recorded fleet host prints nothing"
+  assert_contains "$(run_check "$dir" codex)" "this session runs on codex but the fleet host is claude" "before any switch the crew harness is the fleet host"
+  printf 'default\n' > "$dir/config/crew-harness"
+  assert_equals "" "$(run_check "$dir" codex)" "a home with no known fleet host prints nothing"
   pass "check prints a notice naming the one command on a host mismatch, and nothing otherwise"
 }
 
@@ -497,3 +566,9 @@ test_check_names_the_one_command_on_a_host_mismatch
 test_check_flags_workers_left_on_another_host
 test_check_in_a_secondmate_home_points_at_the_primary
 test_save_captures_the_live_config_into_a_profile
+test_unclassified_run_is_reported_unreadable
+test_started_agent_is_named_for_an_active_run
+test_worker_on_a_non_host_harness_is_left_alone
+test_failed_secondmate_relaunch_skips_its_steer
+test_profile_without_tiers_keeps_the_dispatch_default_profile
+test_inline_agent_args_are_refused

@@ -31,15 +31,19 @@
 #   Primary home (fleet scope), in this order:
 #   1. Validate the profile; refuse before any change when it is incomplete or
 #      the reviewer config's structure is not recognized.
-#   2. Inventory every ship and scout task in this home: endpoint state, park
-#      state and its validation run (`no-mistakes axi status` in its worktree).
+#   2. Inventory every ship and scout task in this home whose harness is
+#      another host (a saved profile's name; a worker a dispatch rule sent to
+#      some other harness is left alone): endpoint state, park state and its
+#      validation run (`no-mistakes axi status` in its worktree).
 #   3. Write the profile into config/ and the reviewer config
 #      (${NM_HOME:-~/.no-mistakes}/config.yaml): only the top-level `agent:`
-#      line and the `agent_args_override.<agent>` list change.
+#      line and the `agent_args_override.<agent>` list change. A failed config
+#      write restores the config files it already replaced and stops before
+#      relaunching anything.
 #   4. Push inherited config to live secondmate homes (fm-config-push.sh).
 #   5. Relaunch each local secondmate on the new pin (fm-control.sh relaunch)
-#      and steer it to run this command in its own home. A remote secondmate
-#      is listed for manual follow-up.
+#      and, once that relaunch succeeded, steer it to run this command in its
+#      own home. A remote secondmate is listed for manual follow-up.
 #   6. Relaunch each worker on the same tier of the new host. An alive worker
 #      goes through fm-control.sh relaunch, a parked one through
 #      fm-worker-park.sh unpark, a stopped unparked one is only reported, and
@@ -51,13 +55,15 @@
 #   write to project worktrees, so each worker's relaunch note carries its own
 #   continuation: an active run stays on the agent it started with and the
 #   worker keeps driving it; a failed or cancelled run is continued on the new
-#   host with the supported `no-mistakes axi sync` (or the exact custody
-#   recovery `axi status` names) and then `no-mistakes rerun`. A recovery that
-#   carries --keep-local would discard commits, so the note tells the worker to
-#   raise a decision instead.
+#   host by running the exact branch_sync.next_action command `axi status`
+#   names (a sync or custody recovery), if any, and then `no-mistakes rerun`.
+#   A command that carries --keep-local would discard commits, so the note
+#   tells the worker to raise a decision and stop instead. A run whose status
+#   cannot be classified is reported as unreadable for the worker to check.
 #   --dry-run prints the same plan and changes nothing.
 #   Each applied switch writes state/host-switch/<stamp>/ with plan.txt,
 #   actions.log and the previous config and reviewer config.
+#   One switch runs at a time per home (state/.host-switch.lock).
 #   Exit 0 when every action succeeded, 1 when any action failed (the rest
 #   still ran), 2 on a usage error or a refusal before any change.
 #
@@ -67,11 +73,12 @@
 #   existing worker-tiers file is kept.
 #
 # check [--session-host <host>]
-#   Read-only session-start notice, printed by bin/fm-bootstrap.sh. Prints
-#   HOST_PROFILE lines when this session's host (bin/fm-harness.sh unless
-#   given) differs from the fleet host, or when recorded workers in this home
-#   still run on another host; prints nothing otherwise or when no fleet host
-#   is recorded. It never switches anything.
+#   Read-only session-start notice, printed by bin/fm-bootstrap.sh. The fleet
+#   host is config/host-profile, or before any switch the crew harness when it
+#   names a concrete adapter. Prints HOST_PROFILE lines when this session's
+#   host (bin/fm-harness.sh unless given) differs from the fleet host, or when
+#   recorded workers in this home still run on another host; prints nothing
+#   otherwise or when no fleet host is known. It never switches anything.
 #
 # verify
 #   Read-only: list secondmates, workers, the reviewer config and validation
@@ -113,6 +120,8 @@ usage() {
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-worker-park-lib.sh
@@ -202,6 +211,7 @@ nm_render() {  # <config-file> <agent> <args-file>
         if ($0 ~ /^[ ]+- / && indent($0) > key_ind) next
         in_key = 0
       }
+      if ($0 ~ ("^[ ]+" agent ":[[:space:]]*[^[:space:]#]")) bad = 1
       if (n > 0 && $0 ~ ("^[ ]+" agent ":[[:space:]]*$")) {
         print; key_ind = indent($0); emit_args(key_ind + 2); key_done = 1; in_key = 1; next
       }
@@ -217,20 +227,36 @@ nm_render() {  # <config-file> <agent> <args-file>
 
 # --- tiers ------------------------------------------------------------------
 
-# Every known tier as "<host> <tier> <harness> <model> <effort>".
+# Every saved profile's tiers as "<host> <tier> <harness> <model> <effort>".
+profile_tier_lines() {
+  local f host
+  for f in "$PROFILES"/*/worker-tiers; do
+    [ -f "$f" ] || continue
+    host=$(basename "$(dirname "$f")")
+    grep -v '^[[:space:]]*\(#\|$\)' "$f" | sed "s/^[[:space:]]*/$host /"
+  done
+  return 0
+}
+
+# Every known tier: the saved profiles' in fleet scope, the inherited copy in
+# home scope.
 tier_lines() {
-  local f host line
   if [ "$SCOPE" = fleet ]; then
-    for f in "$PROFILES"/*/worker-tiers; do
-      [ -f "$f" ] || continue
-      host=$(basename "$(dirname "$f")")
-      while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in ''|'#'*) continue ;; esac
-        printf '%s %s\n' "$host" "$line"
-      done < "$f"
-    done
+    profile_tier_lines
   elif [ -f "$CONFIG/host-worker-tiers" ]; then
     grep -v '^[[:space:]]*\(#\|$\)' "$CONFIG/host-worker-tiers" || true
+  fi
+}
+
+# 0 when <harness> names a host this home knows: a saved profile (primary) or
+# the fleet host or a host in the inherited tiers (secondmate home).
+is_host() {  # <harness>
+  [ -n "$1" ] || return 1
+  if is_secondmate_home; then
+    [ "$1" = "$(first_line "$CONFIG/host-profile")" ] && return 0
+    [ -f "$CONFIG/host-worker-tiers" ] && awk -v h="$1" '$1 == h { f = 1 } END { exit !f }' "$CONFIG/host-worker-tiers"
+  else
+    [ -d "$PROFILES/$1" ]
   fi
 }
 
@@ -245,7 +271,8 @@ tier_target() {  # <tier> <host> <dispatch-json> <crew-harness>
   local t d
   t=$(tier_lines | awk -v host="$2" -v tier="$1" '$1 == host && $2 == tier { print $3, $4, $5; exit }')
   if [ -z "$t" ] && [ -f "$3" ] && command -v jq >/dev/null 2>&1; then
-    d=$(jq -r '.default // empty | "\(.harness // "") \(.model // "") \(.effort // "")"' "$3" 2>/dev/null || true)
+    d=$(jq -r '.default // empty | if type == "array" then .[0] else . end
+      | "\(.harness // "") \(.model // "") \(.effort // "")"' "$3" 2>/dev/null || true)
     [ "$(word 1 "$d")" = "$4" ] && t=$d
   fi
   printf '%s' "${t:-$4}"
@@ -283,14 +310,15 @@ inventory_run() {  # <worktree> <branch>
   RUN_STATUS=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
   RUN_NEXT=$(fm_nm_branch_sync_nested "$out" next_action code)
   RUN_CMD=$(fm_nm_branch_sync_nested "$out" next_action command)
-  RUN_AGENT=$(printf '%s\n' "$out" | sed -n 's/.*[[:space:]"]\([a-z][a-z0-9-]*\) producing output.*/\1/p' | head -1)
+  RUN_AGENT=$(printf '%s\n' "$out" | sed -nE 's/.*[[:space:]"]([a-z][a-z0-9-]*) (producing output|started pid).*/\1/p' | head -1)
   if fm_nm_run_is_active "$out"; then
     RUN_CLASS=active
     fm_nm_run_is_parked "$out" && RUN_STATUS="$RUN_STATUS, parked at a gate"
   else
     case "$RUN_STATUS" in
       completed) RUN_CLASS=success ;;
-      *) RUN_CLASS=stopped ;;
+      failed|cancelled) RUN_CLASS=stopped ;;
+      *) RUN_CLASS=unreadable ;;
     esac
   fi
 }
@@ -309,15 +337,14 @@ continuation_note() {  # <host>
         "$base" "$RUN_ID" "$RUN_STATUS" "$host"
       ;;
     stopped)
-      case "$RUN_NEXT" in
-        sync) step='run `no-mistakes axi sync`' ;;
-        recover_custody)
-          case "$RUN_CMD" in
-            *--keep-local*) step="do NOT run its recovery command (\`$RUN_CMD\`), because it would discard commits; append needs-decision naming run $RUN_ID and stop" ;;
-            *) step="run exactly \`${RUN_CMD:-no-mistakes axi sync --recover}\`" ;;
-          esac
+      case "$RUN_CMD" in
+        *--keep-local*)
+          printf '%s Your validation run %s ended %s before the switch, and its next step (`%s`) would discard commits. Do NOT run it and do not rerun: append needs-decision naming run %s and that command, and stop. Never abort, force, reset or discard anything.' \
+            "$base" "$RUN_ID" "$RUN_STATUS" "$RUN_CMD" "$RUN_ID"
+          return 0
           ;;
-        *) step='follow branch_sync.next_action if it names a sync or recovery' ;;
+        '') step='it names no sync step' ;;
+        *) step="run exactly \`$RUN_CMD\`" ;;
       esac
       printf '%s Your validation run %s ended %s before the switch. Continue it on %s now: run `no-mistakes axi status`; %s; then run `no-mistakes rerun` from the preserved branch head and drive the new run with `no-mistakes axi status` and `no-mistakes axi respond`. Never abort, force, reset or discard anything.' \
         "$base" "$RUN_ID" "$RUN_STATUS" "$host" "$step"
@@ -335,11 +362,10 @@ run_summary() {
     active) printf 'run %s active (%s) - stays on its start agent%s, never aborted' "$RUN_ID" "$RUN_STATUS" "${RUN_AGENT:+ ($RUN_AGENT)}" ;;
     success) printf 'run %s completed' "$RUN_ID" ;;
     stopped)
-      case "$RUN_NEXT:$RUN_CMD" in
-        recover_custody:*--keep-local*) printf 'run %s %s - recovery would discard commits; worker raises a decision' "$RUN_ID" "$RUN_STATUS" ;;
-        sync:*) printf 'run %s %s - worker continues: axi sync, then rerun' "$RUN_ID" "$RUN_STATUS" ;;
-        recover_custody:*) printf 'run %s %s - worker continues: custody recovery, then rerun' "$RUN_ID" "$RUN_STATUS" ;;
-        *) printf 'run %s %s - worker continues: rerun' "$RUN_ID" "$RUN_STATUS" ;;
+      case "$RUN_CMD" in
+        *--keep-local*) printf 'run %s %s - its next step would discard commits; worker raises a decision' "$RUN_ID" "$RUN_STATUS" ;;
+        '') printf 'run %s %s - worker continues: rerun' "$RUN_ID" "$RUN_STATUS" ;;
+        *) printf 'run %s %s - worker continues: %s, then rerun' "$RUN_ID" "$RUN_STATUS" "$RUN_NEXT" ;;
       esac
       ;;
     *) printf 'run unreadable - worker checks it after relaunch' ;;
@@ -432,6 +458,10 @@ build_plan() {
       plan "worker $id: already on $CREW; unchanged"
       continue
     fi
+    if ! is_host "$h"; then
+      plan "worker $id: on $h, not a host profile; unchanged"
+      continue
+    fi
     tier=$(tier_of "$h" "$m" "$e")
     target=$(tier_target "$tier" "$host" "$DISPATCH" "$CREW")
     th=$(word 1 "$target"); tm=$(word 2 "$target"); te=$(word 3 "$target")
@@ -470,38 +500,60 @@ one_line() { printf '%s' "$1" | tr '\n\t' '  ' | cut -c1-300; }
 install_file() {  # <src> <dest>
   local tmp
   tmp="$2.host-switch.$$"
-  cp "$1" "$tmp" && mv -f "$tmp" "$2"
+  cp "$1" "$tmp" && mv -f "$tmp" "$2" && return 0
+  rm -f "${tmp:?}"
+  return 1
+}
+
+CONFIG_ITEMS="secondmate-harness crew-harness crew-dispatch.json host-worker-tiers host-profile"
+
+# Put back every config item as it was before this switch.
+restore_config() {
+  local item
+  for item in $CONFIG_ITEMS; do
+    if [ -f "$RECORD/config-before/$item" ]; then
+      cp -p "$RECORD/config-before/$item" "${CONFIG:?}/${item:?}"
+    else
+      rm -f "${CONFIG:?}/${item:?}"
+    fi
+  done
 }
 
 apply_config() {
-  local item tmp f host
-  mkdir -p "$RECORD/config-before"
-  for item in secondmate-harness crew-harness crew-dispatch.json host-profile host-worker-tiers; do
-    [ -f "$CONFIG/$item" ] && cp -p "$CONFIG/$item" "$RECORD/config-before/$item"
+  local item stage tmp
+  mkdir -p "$RECORD/config-before" "$RECORD/config-after" || { log_action FAILED "create the switch record"; return 1; }
+  for item in $CONFIG_ITEMS; do
+    if [ -f "$CONFIG/$item" ] && ! cp -p "$CONFIG/$item" "$RECORD/config-before/$item"; then
+      log_action FAILED "back up config/$item"
+      return 1
+    fi
   done
-  for item in secondmate-harness crew-harness crew-dispatch.json; do
-    install_file "$P/$item" "$CONFIG/$item" || { log_action FAILED "write config/$item"; return 1; }
-  done
-  tmp="$CONFIG/.host-worker-tiers.$$"
-  : > "$tmp" || { log_action FAILED "write config/host-worker-tiers"; return 1; }
-  for f in "$PROFILES"/*/worker-tiers; do
-    [ -f "$f" ] || continue
-    host=$(basename "$(dirname "$f")")
-    grep -v '^[[:space:]]*\(#\|$\)' "$f" | sed "s/^/$host /" >> "$tmp"
-  done
-  mv -f "$tmp" "$CONFIG/host-worker-tiers"
-  if ! { printf '%s\n' "$TARGET" > "$CONFIG/host-profile.$$" && mv -f "$CONFIG/host-profile.$$" "$CONFIG/host-profile"; }; then
-    log_action FAILED "write config/host-profile"
+  stage=$RECORD/config-after
+  if ! { cp "$P/secondmate-harness" "$P/crew-harness" "$P/crew-dispatch.json" "$stage/" \
+    && profile_tier_lines > "$stage/host-worker-tiers" \
+    && printf '%s\n' "$TARGET" > "$stage/host-profile"; }; then
+    log_action FAILED "stage the $TARGET profile"
     return 1
   fi
+  for item in $CONFIG_ITEMS; do
+    if ! install_file "$stage/$item" "$CONFIG/$item"; then
+      restore_config
+      log_action FAILED "write config/$item; restored the previous config"
+      return 1
+    fi
+  done
   log_action ok "config switched to the $TARGET profile"
   if [ "$NM_CHANGED" = 1 ]; then
-    cp -p "$NM_CONFIG" "$RECORD/no-mistakes-config.before.yaml" 2>/dev/null || true
+    if ! cp -p "$NM_CONFIG" "$RECORD/no-mistakes-config.before.yaml"; then
+      log_action FAILED "no-mistakes config not changed: its backup failed" "$NM_CONFIG"
+      return 1
+    fi
     tmp="$NM_CONFIG.host-switch.$$"
-    if nm_render "$NM_CONFIG" "$NM_NEW_AGENT" "$NM_ARGS_FILE" > "$tmp" && mv -f "$tmp" "$NM_CONFIG"; then
+    # Copy first so the replacement keeps the original's mode.
+    if cp -p "$NM_CONFIG" "$tmp" && nm_render "$NM_CONFIG" "$NM_NEW_AGENT" "$NM_ARGS_FILE" > "$tmp" && mv -f "$tmp" "$NM_CONFIG"; then
       log_action ok "no-mistakes agent set to $NM_NEW_AGENT (new runs only; active runs keep their agent)"
     else
-      rm -f "$tmp"
+      rm -f "${tmp:?}"
       log_action FAILED "no-mistakes config not changed" "$NM_CONFIG"
       return 1
     fi
@@ -509,11 +561,15 @@ apply_config() {
 }
 
 run_actions() {
-  local i kind id desc note out rc
+  local i kind id desc note out rc relaunch_failed=''
   for i in "${!ACTIONS[@]}"; do
     IFS=$'\t' read -r kind id desc <<< "${ACTIONS[$i]}"
     note=${NOTES[$i]}
     rc=0
+    if [ "$kind" = steer ] && [ "$relaunch_failed" = "$id" ]; then
+      log_action FAILED "$desc" "skipped because its relaunch failed"
+      continue
+    fi
     case "$kind" in
       push) out=$(FM_HOME="$FM_HOME" "$PUSH" 2>&1) || rc=$? ;;
       secondmate) out=$(FM_HOME="$FM_HOME" "$CONTROL" "$id" relaunch 2>&1) || rc=$? ;;
@@ -527,7 +583,12 @@ run_actions() {
         out=$(FM_HOME="$FM_HOME" "$PARK" unpark "$id" --reason "the fleet moved to the $TARGET host" ${ARGS[$i]} --note-extra "$note" 2>&1) || rc=$?
         ;;
     esac
-    if [ "$rc" -eq 0 ]; then log_action ok "$desc"; else log_action FAILED "$desc" "$(one_line "$out")"; fi
+    if [ "$rc" -eq 0 ]; then
+      log_action ok "$desc"
+    else
+      log_action FAILED "$desc" "$(one_line "$out")"
+      [ "$kind" = secondmate ] && relaunch_failed=$id
+    fi
   done
 }
 
@@ -542,6 +603,7 @@ load_target() {  # <host>
     fleet=$(first_line "$CONFIG/host-profile")
     [ "$fleet" = "$TARGET" ] || die "this secondmate home's fleet host is '${fleet:-unset}', not '$TARGET'; the primary firstmate owns the fleet switch"
     CREW=$(first_line "$CONFIG/crew-harness")
+    [ "$CREW" = "$TARGET" ] || die "this secondmate home's inherited crew harness is '${CREW:-unset}', not '$TARGET'; wait for the primary's config push"
     DISPATCH=$CONFIG/crew-dispatch.json
     return 0
   fi
@@ -578,6 +640,11 @@ cmd_switch() {
     *) usage >&2; exit 2 ;;
   esac
   [ -d "$STATE" ] || die "state dir '$STATE' is missing"
+  if [ "$dry" = 0 ]; then
+    LOCK=$STATE/.host-switch.lock
+    fm_lock_try_acquire "$LOCK" || die "another host switch is running in this home ($LOCK)"
+    trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
+  fi
   NM_CHANGED=0
   build_plan "$TARGET"
   for i in "${PLAN[@]}"; do printf '%s\n' "$i"; done
@@ -629,7 +696,8 @@ cmd_check() {
     *) usage >&2; exit 2 ;;
   esac
   fleet=$(first_line "$CONFIG/host-profile")
-  [ -n "$fleet" ] || return 0
+  [ -n "$fleet" ] || fleet=$(first_line "$CONFIG/crew-harness")
+  case "$fleet" in ''|default) return 0 ;; esac
   [ -n "$session" ] || session=$("$HARNESS" 2>/dev/null || true)
   if [ -n "$session" ] && [ "$session" != unknown ] && [ "$session" != "$fleet" ]; then
     if is_secondmate_home; then
@@ -648,6 +716,7 @@ cmd_check() {
     case "$(fm_meta_get "$meta" kind)" in ship|scout) ;; *) continue ;; esac
     h=$(fm_meta_get "$meta" harness)
     [ "$h" = "$crew" ] && continue
+    is_host "$h" || continue
     id=$(basename "$meta" .meta)
     n=$((n + 1))
     [ "$n" -le 5 ] && stale="$stale${stale:+, }$id ($h)"
@@ -684,7 +753,14 @@ cmd_verify() {
         if [ "$h" = "$sm_h" ]; then echo "ok secondmate $id: $h"; else echo "OLD secondmate $id: $h"; bad=1; fi
         ;;
       ship|scout)
-        if [ "$h" = "$crew" ]; then echo "ok worker $id: $h"; else echo "OLD worker $id: $h"; bad=1; fi
+        if [ "$h" = "$crew" ]; then
+          echo "ok worker $id: $h"
+        elif is_host "$h"; then
+          echo "OLD worker $id: $h"
+          bad=1
+        else
+          echo "ok worker $id: $h (not a host profile)"
+        fi
         inventory_run "$(fm_meta_get "$meta" worktree)" "$(fm_meta_get "$meta" branch)"
         if [ "$RUN_CLASS" = active ] && [ -n "$RUN_AGENT" ] && [ "$RUN_AGENT" != "$fleet" ]; then
           echo "OLD run $RUN_ID of $id: active on $RUN_AGENT; the worker reruns it on $fleet after it ends"
