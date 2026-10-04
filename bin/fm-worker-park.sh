@@ -3,7 +3,8 @@
 # their next step needs them.
 #
 # Usage: fm-worker-park.sh scan
-#        fm-worker-park.sh unpark <task-id> --reason <text>
+#        fm-worker-park.sh unpark <task-id> --reason <text> [--harness <h>]
+#                             [--model <m>] [--effort <e>] [--note-extra <text>]
 #
 # Why: an idle worker agent still holds memory. A worker that has finished
 # (scout report written, PR ready and only awaiting merge), declared a
@@ -41,8 +42,10 @@
 #
 # unpark: relaunches a parked worker through `fm-control.sh <id> relaunch
 #   --note <why>`, then retires the park records. A task that is not parked is
-#   a successful no-op. bin/fm-send.sh starts this detached for a steer to a
-#   parked worker; scan is the backstop.
+#   a successful no-op. --harness/--model/--effort pass through to the
+#   relaunch and --note-extra is appended to its note (bin/fm-host-switch.sh
+#   moves a parked worker to another host this way). bin/fm-send.sh starts
+#   this detached for a steer to a parked worker; scan is the backstop.
 #
 # Refusals: any control-plane refusal leaves the worker as it was, is logged
 #   once to state/worker-park.log, and the same action is not retried by scan
@@ -241,8 +244,10 @@ park() {  # <id> <crew-line> <resolved-status-line>
   log "$id" parked "$state ($(one_line "$out"))"
 }
 
-unpark() {  # <id> <reason>
-  local id=$1 reason=$2 lock note out rc state at
+unpark() {  # <id> <reason> [extra-note] [relaunch-args...]
+  local id=$1 reason=$2 extra=${3:-} lock note out rc state at
+  shift 2
+  [ "$#" -eq 0 ] || shift
   fm_worker_park_valid "$STATE" "$id" || return 0
   lock="$STATE/.worker-park-$id.lock"
   fm_lock_try_acquire "$lock" || { echo "unpark of $id already in progress"; return 0; }
@@ -252,9 +257,9 @@ unpark() {  # <id> <reason>
   fi
   state=$(fm_worker_park_field "$STATE" "$id" state)
   at=$(fm_worker_park_field "$STATE" "$id" parked_at)
-  note="Firstmate parked this worker (stopped its agent while the task waited in state '$state') at $(fm_worker_park_utc "$at") and relaunched it because: $reason. Nothing in the local copy changed while it was parked. Read your inbox as instructed above and any handoff you keep, then continue the task from its current state."
+  note="Firstmate parked this worker (stopped its agent while the task waited in state '$state') at $(fm_worker_park_utc "$at") and relaunched it because: $reason. Nothing in the local copy changed while it was parked. Read your inbox as instructed above and any handoff you keep, then continue the task from its current state.${extra:+ $extra}"
   rc=0
-  out=$(FM_HOME="$FM_HOME" "$CONTROL" "$id" relaunch --note "$note" 2>&1) || rc=$?
+  out=$(FM_HOME="$FM_HOME" "$CONTROL" "$id" relaunch "$@" --note "$note" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     record_refusal "$id" unpark "$out"
     fm_lock_release "$lock" || true
@@ -465,8 +470,20 @@ case "$1" in
     scan
     ;;
   unpark)
-    [ "$#" -eq 4 ] && [ "$3" = --reason ] && [ -n "$4" ] || { usage >&2; exit 2; }
-    [ -f "$STATE/$2.meta" ] || { echo "error: no task '$2' in $STATE" >&2; exit 1; }
-    unpark "$2" "$4"
+    [ "$#" -ge 4 ] && [ "$3" = --reason ] && [ -n "$4" ] || { usage >&2; exit 2; }
+    unpark_id=$2 unpark_reason=$4 unpark_extra=''
+    unpark_args=()
+    shift 4
+    while [ "$#" -gt 0 ]; do
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
+      case "$1" in
+        --harness|--model|--effort) unpark_args+=("$1" "$2") ;;
+        --note-extra) unpark_extra=$2 ;;
+        *) usage >&2; exit 2 ;;
+      esac
+      shift 2
+    done
+    [ -f "$STATE/$unpark_id.meta" ] || { echo "error: no task '$unpark_id' in $STATE" >&2; exit 1; }
+    unpark "$unpark_id" "$unpark_reason" "$unpark_extra" ${unpark_args[@]+"${unpark_args[@]}"}
     ;;
 esac

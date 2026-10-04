@@ -8,7 +8,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | What you want to configure | Start here |
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
-| Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
+| Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend), [harness support](#harness-support), and [host profiles](#host-profiles-confighost-profiles) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), [Calm preference](#calm-preference-configcalm), and [worker parking](#worker-parking-configworker-park) |
@@ -825,6 +825,25 @@ Its `remove` action excises only the marker-delimited Firstmate region and remov
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
 For omp secondmate launches, `fm-spawn.sh` passes no `-e` at all: omp auto-discovers the home's tracked `.omp/extensions/` with no trust gate, and naming a discovered file with `-e` as well loads it twice; every omp launch instead carries the tracked `.omp/fm-worker-overlay.yml` posture overlay through `--config`, which [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns.
+
+## Host profiles (config/host-profiles)
+
+A fleet runs on one host at a time, Claude or Codex: the secondmates, the workers, and the no-mistakes reviewer all follow the host the captain opens the session on.
+A host profile saves every setting that changes with the host, so switching is one command and switching back is exact.
+
+### Save and switch
+
+The primary home keeps one profile per host under `config/host-profiles/<host>/`: the secondmate pin, the crew harness, the dispatch profiles, the no-mistakes agent and its argument list, and optional worker tiers that keep each worker's reasoning class on the new host.
+`bin/fm-host-switch.sh save <host>` captures the live configuration into a profile while the fleet runs on that host.
+`bin/fm-host-switch.sh <host> --dry-run` prints the exact plan and changes nothing; without `--dry-run` it applies the profile and relaunches every secondmate and worker on the new host, keeping a record of the previous settings under `state/host-switch/`.
+`bin/fm-host-switch.sh verify` lists anything still on another host.
+A switch never aborts, forces, or rewrites a no-mistakes run: each relaunched worker is told how to continue its own run on the new host.
+
+### Session start and secondmates
+
+`config/host-profile` names the fleet host last applied, and once a profile is saved or a switch applied, session start prints a `HOST_PROFILE` notice naming the one command when this session's host differs; it never switches by itself.
+`config/host-profile` and `config/host-worker-tiers` are inherited by secondmate homes, where the same command moves only that home's own workers; the profile directory, the secondmate pin, and the reviewer config stay with the primary.
+[`bin/fm-host-switch.sh`](../bin/fm-host-switch.sh) owns the file formats, the order of actions, the run continuation, and the exit codes.
 
 ## Claude permission mode (config/claude-permission-mode)
 
