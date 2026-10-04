@@ -841,7 +841,7 @@ A switch never aborts, forces, or rewrites a no-mistakes run: each relaunched wo
 
 ### Session start and secondmates
 
-`config/host-profile` names the fleet host last applied, and session start prints a `HOST_PROFILE` notice naming the one command when this session's host differs; it never switches by itself.
+`config/host-profile` names the fleet host last applied, and once a profile is saved or a switch applied, session start prints a `HOST_PROFILE` notice naming the one command when this session's host differs; it never switches by itself.
 `config/host-profile` and `config/host-worker-tiers` are inherited by secondmate homes, where the same command moves only that home's own workers; the profile directory, the secondmate pin, and the reviewer config stay with the primary.
 [`bin/fm-host-switch.sh`](../bin/fm-host-switch.sh) owns the file formats, the order of actions, the run continuation, and the exit codes.
 

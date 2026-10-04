@@ -387,9 +387,32 @@ test_remote_and_current_secondmates_are_not_relaunched() {
   sed -i.bak 's/^harness=.*/harness=codex/' "$dir/state/near.meta"
   out=$(run_switch "$dir" codex)
   assert_contains "$out" "secondmate far: remote on box.example; switch it by hand there" "a remote secondmate is listed"
-  assert_contains "$out" "secondmate near: already on codex; unchanged" "a current secondmate is left alone"
-  assert_equals "push" "$(calls "$dir")" "only the config push runs"
-  pass "remote secondmates are listed and current ones left alone"
+  assert_contains "$out" "secondmate near: already on codex; steer it to run bin/fm-host-switch.sh codex in its home" "a current secondmate is still steered"
+  assert_equals "push" "$(calls "$dir" | sed -n 1p)" "the config push runs first"
+  assert_contains "$(calls "$dir" | sed -n 2p)" "send [near] [The fleet host is now codex." "the current secondmate is steered to switch its own workers"
+  assert_not_contains "$(calls "$dir")" "control [" "no secondmate is relaunched"
+  assert_not_contains "$(calls "$dir")" "[far]" "a remote secondmate gets nothing"
+  pass "remote secondmates are listed and current ones are steered without a relaunch"
+}
+
+test_failed_secondmate_steer_is_retried_by_a_rerun() {
+  local dir out rc=0
+  dir=$(new_home sm-steer)
+  add_secondmate "$dir" sm1
+  echo 1 > "$dir/stub/send-rc"
+  out=$(run_switch "$dir" codex) || rc=$?
+  expect_code 1 "$rc" "a failed steer"
+  assert_contains "$out" "FAILED steer secondmate sm1 to switch its own workers" "the failed steer is reported"
+  # The stub control plane does not republish records; do what fm-spawn would.
+  sed -i.bak 's/^harness=.*/harness=codex/' "$dir/state/sm1.meta"
+  rm "$dir/stub/send-rc"
+  : > "$dir/stub/calls.log"
+  rc=0
+  out=$(run_switch "$dir" codex) || rc=$?
+  expect_code 0 "$rc" "the rerun"$'\n'"$out"
+  assert_contains "$(calls "$dir")" "send [sm1] [The fleet host is now codex." "the rerun steers the secondmate again"
+  assert_not_contains "$(calls "$dir")" "control [sm1]" "the rerun does not relaunch it again"
+  pass "a secondmate steer that failed is retried by rerunning the switch"
 }
 
 test_secondmate_home_switches_only_its_own_workers() {
@@ -412,6 +435,50 @@ test_secondmate_home_switches_only_its_own_workers() {
   out=$(run_switch "$dir" claude) && fail "a secondmate home must refuse a host the fleet is not on"
   assert_contains "$out" "the primary firstmate owns the fleet switch" "the refusal names the owner"
   pass "a secondmate home moves only its own workers, onto the fleet host it inherited"
+}
+
+test_secondmate_home_moves_workers_off_a_host_without_tiers() {
+  local primary dir out
+  primary=$(new_home sm-no-tiers-primary)
+  rm "$primary/config/host-profiles/claude/worker-tiers"
+  run_switch "$primary" codex >/dev/null
+  dir=$(new_home sm-no-tiers)
+  rm -rf "$dir/config/host-profiles"
+  printf 'sm-home\n' > "$dir/.fm-secondmate-home"
+  # What fm-config-push delivers to a secondmate home.
+  cp "$primary/config/host-profile" "$primary/config/crew-harness" \
+    "$primary/config/crew-dispatch.json" "$primary/config/host-worker-tiers" "$dir/config/"
+  add_worker "$dir" w1 claude opus high
+  assert_contains "$(run_check "$dir" codex)" "1 worker(s) in this home still run on another host than codex: w1 (claude)" "check flags the worker"
+  out=$(run_switch "$dir" verify) && fail "verify must report a worker left on an old host"$'\n'"$out"
+  assert_contains "$out" "OLD worker w1: claude" "verify reports the worker"
+  out=$(run_switch "$dir" codex)
+  expect_code 0 $? "home-scope switch"$'\n'"$out"
+  assert_contains "$(calls "$dir")" "control [w1] [relaunch] [--harness] [codex] [--model] [gpt-sol] [--effort] [medium]" "the worker moves to the new host"
+  pass "a secondmate home moves workers off a host whose profile has no tiers"
+}
+
+test_reviewer_write_failure_restores_the_config() {
+  local dir out rc=0
+  if [ "$(id -u)" = 0 ]; then
+    pass "reviewer write failure check skipped as root (a read-only directory does not restrict root)"
+    return 0
+  fi
+  dir=$(new_home nm-write-fail)
+  add_worker "$dir" w1 claude opus high
+  chmod 555 "$dir/nm"
+  out=$(run_switch "$dir" codex) || rc=$?
+  chmod 755 "$dir/nm"
+  expect_code 1 "$rc" "a failed reviewer write"
+  assert_contains "$out" "FAILED no-mistakes config not changed; restored the previous config" "the failure says the config was restored"
+  assert_equals "claude" "$(cat "$dir/config/crew-harness")" "the crew harness is restored"
+  assert_equals "claude opus" "$(cat "$dir/config/secondmate-harness")" "the secondmate pin is restored"
+  assert_equals "claude" "$(cat "$dir/config/host-profile")" "the fleet host is restored"
+  assert_grep '"harness":"claude"' "$dir/config/crew-dispatch.json" "dispatch is restored"
+  assert_absent "$dir/config/host-worker-tiers" "an item absent before the switch is removed again"
+  assert_equals "$(nm_config_claude)" "$(cat "$dir/nm/config.yaml")" "the reviewer config is untouched"
+  assert_equals "" "$(calls "$dir")" "nothing is relaunched"
+  pass "a failed reviewer config write restores the config and relaunches nothing"
 }
 
 test_unclassified_run_is_reported_unreadable() {
@@ -512,6 +579,19 @@ test_check_names_the_one_command_on_a_host_mismatch() {
   pass "check prints a notice naming the one command on a host mismatch, and nothing otherwise"
 }
 
+test_check_is_silent_in_a_home_that_never_opted_in() {
+  local dir
+  dir=$(new_home check-opt-out)
+  rm -rf "$dir/config/host-profiles" "$dir/config/host-profile"
+  printf 'codex\n' > "$dir/config/crew-harness"
+  add_worker "$dir" w1 claude opus high
+  assert_equals "" "$(run_check "$dir" claude)" "a mixed crew harness with no saved profile prints nothing"
+  assert_equals "" "$(run_check "$dir" pi)" "no save-a-profile notice without a saved profile"
+  printf 'codex\n' > "$dir/config/host-profile"
+  assert_contains "$(run_check "$dir" claude)" "this session runs on claude but the fleet host is codex" "an applied switch opts the home in"
+  pass "check is silent until the home saves a profile or applies a switch"
+}
+
 test_check_flags_workers_left_on_another_host() {
   local dir out
   dir=$(new_home check-stale)
@@ -563,6 +643,7 @@ test_stopped_worker_is_reported_not_relaunched
 test_remote_and_current_secondmates_are_not_relaunched
 test_secondmate_home_switches_only_its_own_workers
 test_check_names_the_one_command_on_a_host_mismatch
+test_check_is_silent_in_a_home_that_never_opted_in
 test_check_flags_workers_left_on_another_host
 test_check_in_a_secondmate_home_points_at_the_primary
 test_save_captures_the_live_config_into_a_profile
@@ -570,5 +651,8 @@ test_unclassified_run_is_reported_unreadable
 test_started_agent_is_named_for_an_active_run
 test_worker_on_a_non_host_harness_is_left_alone
 test_failed_secondmate_relaunch_skips_its_steer
+test_failed_secondmate_steer_is_retried_by_a_rerun
+test_secondmate_home_moves_workers_off_a_host_without_tiers
+test_reviewer_write_failure_restores_the_config
 test_profile_without_tiers_keeps_the_dispatch_default_profile
 test_inline_agent_args_are_refused

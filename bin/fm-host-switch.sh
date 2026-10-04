@@ -24,8 +24,9 @@
 #   worker-tiers        optional; "<strong|standard|light> <harness> <model> <effort>"
 #                       lines that keep a worker's reasoning class across hosts
 # config/host-profile names the fleet host last applied. It and
-# config/host-worker-tiers (every profile's tiers, prefixed by host) are
-# inherited by secondmate homes; the profile directory is primary-only.
+# config/host-worker-tiers (every profile's host on a line of its own, then its
+# tiers prefixed by host) are inherited by secondmate homes; the profile
+# directory is primary-only.
 #
 # <host> [--dry-run]
 #   Primary home (fleet scope), in this order:
@@ -41,9 +42,11 @@
 #      write restores the config files it already replaced and stops before
 #      relaunching anything.
 #   4. Push inherited config to live secondmate homes (fm-config-push.sh).
-#   5. Relaunch each local secondmate on the new pin (fm-control.sh relaunch)
-#      and, once that relaunch succeeded, steer it to run this command in its
-#      own home. A remote secondmate is listed for manual follow-up.
+#   5. Relaunch each local secondmate not yet on the new pin (fm-control.sh
+#      relaunch) and, once it is on the pin, steer it to run this command in
+#      its own home; every run steers again, so a steer that failed is retried
+#      by rerunning the switch. A remote secondmate is listed for manual
+#      follow-up.
 #   6. Relaunch each worker on the same tier of the new host. An alive worker
 #      goes through fm-control.sh relaunch, a parked one through
 #      fm-worker-park.sh unpark, a stopped unparked one is only reported, and
@@ -74,11 +77,13 @@
 #
 # check [--session-host <host>]
 #   Read-only session-start notice, printed by bin/fm-bootstrap.sh. The fleet
-#   host is config/host-profile, or before any switch the crew harness when it
-#   names a concrete adapter. Prints HOST_PROFILE lines when this session's
-#   host (bin/fm-harness.sh unless given) differs from the fleet host, or when
-#   recorded workers in this home still run on another host; prints nothing
-#   otherwise or when no fleet host is known. It never switches anything.
+#   host is config/host-profile, or before any switch in a home with a saved
+#   profile the crew harness when it names a concrete adapter. Prints
+#   HOST_PROFILE lines when this session's host (bin/fm-harness.sh unless
+#   given) differs from the fleet host, or when recorded workers in this home
+#   still run on another host; prints nothing otherwise, in a home with
+#   neither a saved profile nor an applied switch, or when no fleet host is
+#   known. It never switches anything.
 #
 # verify
 #   Read-only: list secondmates, workers, the reviewer config and validation
@@ -227,13 +232,16 @@ nm_render() {  # <config-file> <agent> <args-file>
 
 # --- tiers ------------------------------------------------------------------
 
-# Every saved profile's tiers as "<host> <tier> <harness> <model> <effort>".
+# Every saved profile's host as "<host>", then its tiers as
+# "<host> <tier> <harness> <model> <effort>".
 profile_tier_lines() {
-  local f host
-  for f in "$PROFILES"/*/worker-tiers; do
-    [ -f "$f" ] || continue
-    host=$(basename "$(dirname "$f")")
-    grep -v '^[[:space:]]*\(#\|$\)' "$f" | sed "s/^[[:space:]]*/$host /"
+  local d host
+  for d in "$PROFILES"/*/; do
+    [ -d "$d" ] || continue
+    host=$(basename "$d")
+    printf '%s\n' "$host"
+    [ -f "$d/worker-tiers" ] || continue
+    grep -v '^[[:space:]]*\(#\|$\)' "$d/worker-tiers" | sed "s/^[[:space:]]*/$host /"
   done
   return 0
 }
@@ -249,7 +257,8 @@ tier_lines() {
 }
 
 # 0 when <harness> names a host this home knows: a saved profile (primary) or
-# the fleet host or a host in the inherited tiers (secondmate home).
+# the fleet host or a host the inherited host-worker-tiers names (secondmate
+# home).
 is_host() {  # <harness>
   [ -n "$1" ] || return 1
   if is_secondmate_home; then
@@ -431,6 +440,7 @@ build_plan() {
     fi
     sm_line=$(first_line "$P/secondmate-harness")
     sm_h=$(word 1 "$sm_line")
+    note="The fleet host is now $host. Run \`bin/fm-host-switch.sh $host --dry-run\` and then \`bin/fm-host-switch.sh $host\` in this home to move your own workers onto it, then report the result through your status."
     while IFS= read -r meta; do
       [ -n "$meta" ] || continue
       id=$(basename "$meta" .meta)
@@ -439,12 +449,12 @@ build_plan() {
       if [ -n "$remote" ]; then
         plan "secondmate $id: remote on $remote; switch it by hand there"
       elif [ "$h" = "$sm_h" ]; then
-        plan "secondmate $id: already on $sm_h; unchanged"
+        plan "secondmate $id: already on $sm_h; steer it to run bin/fm-host-switch.sh $host in its home"
+        action steer "$id" "steer secondmate $id to switch its own workers" "$note"
       else
         plan "secondmate $id: relaunch on $sm_line, then steer it to run bin/fm-host-switch.sh $host in its home"
         action secondmate "$id" "relaunch secondmate $id on $sm_line"
-        action steer "$id" "steer secondmate $id to switch its own workers" \
-          "The fleet host is now $host. Run \`bin/fm-host-switch.sh $host --dry-run\` and then \`bin/fm-host-switch.sh $host\` in this home to move your own workers onto it, then report the result through your status."
+        action steer "$id" "steer secondmate $id to switch its own workers" "$note"
       fi
     done <<< "$SM_METAS"
   fi
@@ -528,6 +538,10 @@ apply_config() {
       return 1
     fi
   done
+  if [ "$NM_CHANGED" = 1 ] && ! cp -p "$NM_CONFIG" "$RECORD/no-mistakes-config.before.yaml"; then
+    log_action FAILED "back up the no-mistakes config" "$NM_CONFIG"
+    return 1
+  fi
   stage=$RECORD/config-after
   if ! { cp "$P/secondmate-harness" "$P/crew-harness" "$P/crew-dispatch.json" "$stage/" \
     && profile_tier_lines > "$stage/host-worker-tiers" \
@@ -544,17 +558,14 @@ apply_config() {
   done
   log_action ok "config switched to the $TARGET profile"
   if [ "$NM_CHANGED" = 1 ]; then
-    if ! cp -p "$NM_CONFIG" "$RECORD/no-mistakes-config.before.yaml"; then
-      log_action FAILED "no-mistakes config not changed: its backup failed" "$NM_CONFIG"
-      return 1
-    fi
     tmp="$NM_CONFIG.host-switch.$$"
     # Copy first so the replacement keeps the original's mode.
     if cp -p "$NM_CONFIG" "$tmp" && nm_render "$NM_CONFIG" "$NM_NEW_AGENT" "$NM_ARGS_FILE" > "$tmp" && mv -f "$tmp" "$NM_CONFIG"; then
       log_action ok "no-mistakes agent set to $NM_NEW_AGENT (new runs only; active runs keep their agent)"
     else
       rm -f "${tmp:?}"
-      log_action FAILED "no-mistakes config not changed" "$NM_CONFIG"
+      restore_config
+      log_action FAILED "no-mistakes config not changed; restored the previous config" "$NM_CONFIG"
       return 1
     fi
   fi
@@ -688,6 +699,14 @@ cmd_save() {
   [ -f "$dir/worker-tiers" ] || echo "note: no worker-tiers in $dir; relaunched workers take the dispatch default until you add '<strong|standard|light> <harness> <model> <effort>' lines"
 }
 
+has_profile() {
+  local d
+  for d in "$PROFILES"/*/; do
+    [ -d "$d" ] && return 0
+  done
+  return 1
+}
+
 cmd_check() {
   local session='' fleet meta id h stale='' n=0 crew
   case "${1:-}" in
@@ -696,7 +715,10 @@ cmd_check() {
     *) usage >&2; exit 2 ;;
   esac
   fleet=$(first_line "$CONFIG/host-profile")
-  [ -n "$fleet" ] || fleet=$(first_line "$CONFIG/crew-harness")
+  if [ -z "$fleet" ]; then
+    has_profile || return 0
+    fleet=$(first_line "$CONFIG/crew-harness")
+  fi
   case "$fleet" in ''|default) return 0 ;; esac
   [ -n "$session" ] || session=$("$HARNESS" 2>/dev/null || true)
   if [ -n "$session" ] && [ "$session" != unknown ] && [ "$session" != "$fleet" ]; then
