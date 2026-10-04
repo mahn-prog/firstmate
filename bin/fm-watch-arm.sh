@@ -446,11 +446,7 @@ stop_home_watcher() {
   fm_pid_alive "$lock_pid" || return 0
   if fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$lock_pid" "$FM_HOME"; then
     if ! kill -TERM "$lock_pid" 2>/dev/null && fm_pid_alive "$lock_pid"; then
-      if fm_proc_ps_runs; then
-        echo "watcher: FAILED - pid=$lock_pid did not stop: the stop signal was refused"
-      else
-        echo "watcher: FAILED - pid=$lock_pid did not stop: the sandbox refused the stop signal, because a process started by another sandboxed command cannot be signalled from inside the sandbox; stop it from outside the sandbox"
-      fi
+      echo "watcher: FAILED - pid=$lock_pid did not stop: the sandbox refused the stop signal, because a process started by another sandboxed command cannot be signalled from inside the sandbox; stop it from outside the sandbox"
       return 1
     fi
     i=0
