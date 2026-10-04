@@ -164,6 +164,7 @@ harness_marker() {
 # precedence above can demand real process evidence before trusting FM_OMP_HARNESS.
 ancestry_names_omp() {
   local pid=$$ comm
+  fm_proc_ps_runs || true
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(fm_proc_field comm "$pid") || return 1
     [ "$(basename -- "$comm")" = omp ] && return 0
@@ -265,6 +266,7 @@ harness_process_verdict() {  # <pid>
 # inside another harness resolves to its own harness.
 harness_ancestry() {  # [<pid>]
   local pid=${1:-$$} verdict
+  fm_proc_ps_runs || true
   for _ in 1 2 3 4 5 6 7 8; do
     verdict=$(harness_process_verdict "$pid")
     [ -z "$verdict" ] || { echo "$verdict"; return; }

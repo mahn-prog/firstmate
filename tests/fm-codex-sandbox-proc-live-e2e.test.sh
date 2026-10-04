@@ -10,8 +10,9 @@
 # runs the real scripts under the installed `codex sandbox` with the
 # workspace-write profile, in a throwaway home, and checks: a dead owner's lock
 # is taken, a live Codex session's lock is refused, a session confirms its own
-# lock, session start takes the lock writable, and a process's liveness and
-# identity read the same inside as outside. `codex sandbox` has no approval
+# lock, session start takes the lock writable, the turn-end guard passes after
+# session start once a watcher recorded inside the sandbox holds the home, and a
+# process's liveness and identity read the same inside as outside. `codex sandbox` has no approval
 # path, so every step passing is also the proof that none needed escalation.
 #
 # It spends no model tokens (`codex sandbox` runs commands only), so it runs by
@@ -131,6 +132,39 @@ test_session_start_takes_the_lock_writable() {
   pass "codex $CODEX_VERSION: session start takes the lock writable inside the sandbox"
 }
 
+# After session start, the Codex Stop hook runs the turn-end guard inside the
+# sandbox. With a task in flight it must block while no watcher holds the home,
+# and pass once a watcher whose identity was recorded inside the sandbox does.
+test_turnend_guard_passes_after_session_start() {
+  local home state live out rc
+  home=$(new_home turnend)
+  state="$home/state"
+  sbx "$home" /bin/bash -c 'bash "$ROOT/bin/fm-session-start.sh" > "$FM_HOME/digest.txt" 2>&1' \
+    || fail "codex $CODEX_VERSION: session start failed inside the sandbox: $(head -n 40 "$home/digest.txt" 2>/dev/null)"
+  git init -q "$home"
+  : > "$home/AGENTS.md"
+  mkdir -p "$home/bin"
+  : > "$state/turnend-task.meta"
+  out=$(printf '{"stop_hook_active":false}' | sbx "$home" /usr/bin/env FM_ROOT_OVERRIDE="$home" /bin/bash "$ROOT/bin/fm-turnend-guard.sh" 2>&1) && rc=0 || rc=$?
+  case "$rc:$out" in
+    2:*"TURN WOULD END BLIND"*) ;;
+    *) fail "codex $CODEX_VERSION: the turn-end guard did not block a home with no watcher (exit $rc): $out" ;;
+  esac
+  sleep 120 &
+  live=$!
+  LIVE_PIDS+=("$live")
+  mkdir -p "$state/.watch.lock"
+  printf '%s\n' "$live" > "$state/.watch.lock/pid"
+  printf '%s\n' "$home" > "$state/.watch.lock/fm-home"
+  printf '%s\n' "$ROOT/bin/fm-watch.sh" > "$state/.watch.lock/watcher-path"
+  sbx "$home" /bin/bash -c '. "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$1"' identity "$live" > "$state/.watch.lock/pid-identity" \
+    || fail "codex $CODEX_VERSION: no watcher identity recorded inside the sandbox"
+  : > "$state/.last-watcher-beat"
+  out=$(printf '{"stop_hook_active":false}' | sbx "$home" /usr/bin/env FM_ROOT_OVERRIDE="$home" /bin/bash "$ROOT/bin/fm-turnend-guard.sh" 2>&1) \
+    || fail "codex $CODEX_VERSION: the turn-end guard did not pass with a live watcher: $out"
+  pass "codex $CODEX_VERSION: the turn-end guard passes after session start inside the sandbox"
+}
+
 # The Codex watcher records its identity inside the sandbox and the Stop-hook
 # turn-end guard checks it outside, so both must read one process the same way.
 test_liveness_and_identity_match_across_the_sandbox() {
@@ -162,4 +196,5 @@ test_sandbox_still_forbids_ps_and_foreign_signals
 test_lock_dead_owner_taken_and_own_confirmed
 test_live_session_lock_refused_then_reclaimed_after_exit
 test_session_start_takes_the_lock_writable
+test_turnend_guard_passes_after_session_start
 test_liveness_and_identity_match_across_the_sandbox

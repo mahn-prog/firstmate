@@ -119,6 +119,7 @@ fm_harness_process_matches() {  # <comm> <args>
 # reported and the callers below decide what they need from it.
 fm_harness_ancestry_pids() {
   local pid=$$ comm args extending=0 printed=0
+  fm_proc_ps_runs || true
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
     comm=$(fm_proc_field comm "$pid") || break
     args=$(fm_proc_field args "$pid")
@@ -164,20 +165,31 @@ EOF
   printf '%s\n' "$outermost"
 }
 
-# True if $1 is a live process that looks like a verified harness.
+# True if $1 is a live process that looks like a verified harness. $2 is the
+# session lock file that records $1.
 # Where ps cannot run, the kernel record has no argv or executable path, so a
 # harness identified only by them (a version-named Claude Code binary, a harness
 # script under node) cannot be told apart from an unrelated process. A live pid
 # there counts as a harness, so a live session's lock is refused rather than
-# taken; the cost is that a dead owner's reused pid also refuses until it exits.
-fm_harness_pid_alive() {
-  local pid=$1 comm args
+# taken, unless the process started in a later second than the lock file was
+# last written: it cannot be the session that wrote it, so the pid was reused.
+# A reuse inside the same second still refuses until that process exits.
+fm_harness_pid_alive() {  # <pid> <lock-file>
+  local pid=$1 lock=${2:-} comm args start mtime
   fm_pid_alive "$pid" || return 1
+  fm_proc_ps_runs || true
   comm=$(fm_proc_field comm "$pid") || return 1
   args=$(fm_proc_field args "$pid")
   fm_harness_process_matches "$comm" "$args" && return 0
   fm_proc_ps_runs && return 1
-  return 0
+  start=$(fm_proc_start_epoch "$pid") || return 0
+  if [ "$_FM_UNAME" = Darwin ]; then
+    mtime=$(/usr/bin/stat -f %m "$lock" 2>/dev/null)
+  else
+    mtime=$(stat -c %Y "$lock" 2>/dev/null)
+  fi
+  case "$mtime" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$start" -le "$mtime" ]
 }
 
 # --- trusted same-session identity -------------------------------------------
@@ -211,6 +223,7 @@ fm_session_lock_trusted_session_id() {  # [<ancestry-pids>]
   [ -n "$id" ] || return 1
   case "$id" in *$'\n'*|*$'\r'*) return 1 ;; esac
   case "$claude_pid" in ''|*[!0-9]*) return 1 ;; esac
+  fm_proc_ps_runs || true
   if [ -z "$pids" ]; then
     pids=$(fm_harness_ancestry_pids) || return 1
   fi
@@ -294,7 +307,7 @@ fm_session_lock_owned_by_self() {
 $pids
 EOF
   fm_session_lock_same_session "$state" "$pids" || return 1
-  fm_harness_pid_alive "$lock_pid"
+  fm_harness_pid_alive "$lock_pid" "$state/.lock"
 }
 
 # True when state dir $1 records a live verified harness outside this process's
@@ -312,7 +325,7 @@ fm_session_lock_foreign_owner_live() {
   case "$lock_pid" in
     ''|*[!0-9]*) return 1 ;;
   esac
-  fm_harness_pid_alive "$lock_pid" || return 1
+  fm_harness_pid_alive "$lock_pid" "$state/.lock" || return 1
   pids=$(fm_harness_ancestry_pids) || return 1
   while IFS= read -r pid; do
     [ "$pid" = "$lock_pid" ] && return 1
@@ -375,7 +388,7 @@ fm_session_lock_inspect() {  # <state>
       ;;
   esac
   if fm_pid_alive "$pid"; then
-    if fm_harness_pid_alive "$pid"; then
+    if fm_harness_pid_alive "$pid" "$lock"; then
       FM_LOCK_INSPECT_STATE=held
       FM_LOCK_INSPECT_LIVE_HARNESS=true
     else

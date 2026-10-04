@@ -321,6 +321,58 @@ test_unrecognizable_live_holder_is_refused_in_the_sandbox() {
   pass "session-lock: an unidentifiable live holder is refused inside the sandbox and stale outside it"
 }
 
+# A live pid that is no recognizable harness keeps its lock inside the sandbox
+# only while it could be the process that wrote the lock: one that started in a
+# later second than the lock file was last written is a reused pid, and the
+# lock is taken. One that started in the same second still refuses.
+test_holder_started_after_the_lock_was_written_is_stale_in_the_sandbox() {
+  have_harness "session-lock: holder started after the lock" || return 0
+  local state out start
+  start_live
+  state="$TMP_ROOT/reused-holder/state"
+  mkdir -p "$state"
+  start=$(proc_eval sandbox "fm_proc_start_epoch $LIVE_PID") \
+    || fail "sandbox: no start time for a live process"
+  printf '%s\n' "$LIVE_PID" > "$state/.lock"
+  perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' "$start" "$state/.lock" \
+    || fail "could not set the lock's mtime"
+  if out=$(in_harness sandbox 'FM_STATE_OVERRIDE="$1" bash "$ROOT/bin/fm-lock.sh"' "$state" 2>&1); then
+    fail "sandbox: a holder that started in the lock's own second lost its lock: $out"
+  fi
+  assert_equals "$LIVE_PID" "$(head -n 1 "$state/.lock")" "sandbox: a same-second holder's lock was rewritten"
+  perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' "$((start - 1))" "$state/.lock" \
+    || fail "could not set the lock's mtime"
+  out=$(in_harness sandbox 'FM_STATE_OVERRIDE="$1" bash "$ROOT/bin/fm-lock.sh" && echo "harness=$PPID"' "$state" 2>&1) \
+    || fail "sandbox: a holder that started after the lock was written kept it: $out"
+  assert_equals "${out##*harness=}" "$(head -n 1 "$state/.lock")" "sandbox: the reused pid's lock was not taken"
+  pass "session-lock: a holder that started after the lock was written is stale inside the sandbox"
+}
+
+# Inside the sandbox a watcher started by an earlier command cannot be
+# signalled, so --stop must say the sandbox refused the signal instead of
+# waiting it out and reporting a generic failure. Outside it, the watcher stops.
+test_watcher_stop_reports_a_refused_signal() {
+  local mode home state out rc
+  for mode in sandbox host; do
+    start_live
+    home="$TMP_ROOT/watch-stop-$mode"
+    state="$home/state"
+    mkdir -p "$state/.watch.lock"
+    printf '%s\n' "$LIVE_PID" > "$state/.watch.lock/pid"
+    printf '%s\n' "$home" > "$state/.watch.lock/fm-home"
+    printf '%s\n' "$ROOT/bin/fm-watch.sh" > "$state/.watch.lock/watcher-path"
+    proc_eval "$mode" "fm_pid_identity $LIVE_PID" > "$state/.watch.lock/pid-identity" \
+      || fail "$mode: no watcher identity recorded"
+    out=$(proc_eval "$mode" "export -f kill 2>/dev/null; unset FM_STATE_OVERRIDE; FM_HOME='$home' bash '$ROOT/bin/fm-watch-arm.sh' --stop" 2>&1) && rc=0 || rc=$?
+    case "$mode:$rc:$out" in
+      sandbox:1:*"watcher: FAILED - pid=$LIVE_PID did not stop: the sandbox refused the stop signal"*) ;;
+      host:0:*"watcher: stopped pid=$LIVE_PID"*) ;;
+      *) fail "$mode: unexpected --stop result (exit $rc): $out" ;;
+    esac
+  done
+  pass "watcher: --stop names the sandbox's refused signal and stops the watcher outside it"
+}
+
 test_live_process_in_another_command_reads_alive_in_the_sandbox
 test_identity_is_the_same_inside_and_outside_the_sandbox
 test_live_lock_holder_is_not_stolen_in_the_sandbox
@@ -330,3 +382,5 @@ test_session_lock_inside_the_sandbox
 test_harness_detection_inside_the_sandbox
 test_watcher_identity_crosses_the_sandbox
 test_unrecognizable_live_holder_is_refused_in_the_sandbox
+test_holder_started_after_the_lock_was_written_is_stale_in_the_sandbox
+test_watcher_stop_reports_a_refused_signal

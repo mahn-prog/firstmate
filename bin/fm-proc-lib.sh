@@ -109,10 +109,12 @@ fm_proc_ps_runs() {
 # fm_proc_field <comm|args|ppid> <pid>
 # Print one field for pid exactly as `ps -o <field>= -p <pid>` prints it, with
 # ps's exit status, wherever ps runs. Where ps cannot execute the kernel record
-# answers instead: comm is the kernel command name (at most 16 bytes), ppid is
-# a bare number, and args, which the kernel record does not carry, prints
-# nothing. Returns 1 when the process does not exist or its record
-# cannot be read.
+# answers instead: comm is the kernel command name (at most 16 bytes) and ppid
+# is a bare number. args, which the kernel record does not carry, prints
+# nothing and is not looked up. Returns 1 when the process does not exist or
+# its record cannot be read. A caller that walks many pids through command
+# substitutions calls fm_proc_ps_runs first, so each subshell inherits the
+# verdict instead of probing ps again.
 fm_proc_field() {  # <field> <pid>
   local field=$1 pid=$2 out rc=0
   if [ "$FM_PROC_PS_RUNS" != 0 ]; then
@@ -125,13 +127,36 @@ fm_proc_field() {  # <field> <pid>
         ;;
     esac
   fi
+  [ "$field" != args ] || return 0
   fm_proc_read "$pid" || return 1
   case "$field" in
     comm) printf '%s\n' "$FM_PROC_COMM" ;;
     ppid) printf '%s\n' "$FM_PROC_PPID" ;;
-    args) ;;
     *) return 1 ;;
   esac
+}
+
+# fm_proc_start_epoch <pid>
+# Print the whole second, in epoch time, at which pid started, from its kernel
+# record. On /proc the start is boot time plus clock ticks, both rounded down,
+# so the printed second is never later than the true start. Returns 1 when the
+# record or the boot time cannot be read.
+fm_proc_start_epoch() {
+  local pid=$1 proc_root btime hz
+  fm_proc_read "$pid" || return 1
+  case "$FM_PROC_START" in
+    *.*)
+      printf '%s\n' "${FM_PROC_START%%.*}"
+      return 0
+      ;;
+  esac
+  proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc}
+  btime=$(sed -n 's/^btime //p' "$proc_root/stat" 2>/dev/null)
+  hz=$(getconf CLK_TCK 2>/dev/null)
+  case "$btime" in ''|*[!0-9]*) return 1 ;; esac
+  case "$hz" in ''|*[!0-9]*|0) return 1 ;; esac
+  case "$FM_PROC_START" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$((btime + FM_PROC_START / hz))"
 }
 
 # fm_pid_alive <pid>

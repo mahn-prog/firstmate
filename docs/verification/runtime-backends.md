@@ -78,6 +78,9 @@ lock acquired: harness pid 67809
 lock: held by live harness pid 67809
 ```
 
+The same refusal applies to every signal, so cross-command reaping is not available inside the sandbox: a `kill -TERM` or `kill -KILL` to a watcher, daemon, or engine started by another sandboxed command is refused.
+`bin/fm-watch-arm.sh --stop` reports that refusal as its reason for failing; stopping such a process takes a command run outside the sandbox.
+
 `tests/fm-codex-sandbox-proc-live-e2e.test.sh` is the command that refreshes this record, and its header owns what it checks.
 The portable half, `tests/fm-proc-lib.test.sh`, pins the same verdicts with a ps that fails as the sandbox makes it fail and a refused `kill -0`.
 
