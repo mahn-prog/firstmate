@@ -125,8 +125,6 @@ usage() {
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-worker-park-lib.sh
@@ -652,6 +650,11 @@ cmd_switch() {
   esac
   [ -d "$STATE" ] || die "state dir '$STATE' is missing"
   if [ "$dry" = 0 ]; then
+    # The lock helpers live in fm-wake-lib.sh, which creates the state dir
+    # when sourced; only the applying path loads it, so check and verify stay
+    # read-only.
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$SCRIPT_DIR/fm-wake-lib.sh"
     LOCK=$STATE/.host-switch.lock
     fm_lock_try_acquire "$LOCK" || die "another host switch is running in this home ($LOCK)"
     trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
