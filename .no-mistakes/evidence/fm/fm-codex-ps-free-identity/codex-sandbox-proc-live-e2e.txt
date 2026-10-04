@@ -1,0 +1,6 @@
+ok - codex codex-cli 0.160.0: the sandbox still refuses ps and foreign kill -0
+ok - codex codex-cli 0.160.0: a dead owner's lock is taken and confirmed inside the sandbox
+ok - codex codex-cli 0.160.0: a live session's lock is refused and reclaimed once that session exits
+ok - codex codex-cli 0.160.0: session start takes the lock writable inside the sandbox
+ok - codex codex-cli 0.160.0: the turn-end guard passes after session start inside the sandbox
+ok - codex codex-cli 0.160.0: liveness and identity read the same inside and outside the sandbox

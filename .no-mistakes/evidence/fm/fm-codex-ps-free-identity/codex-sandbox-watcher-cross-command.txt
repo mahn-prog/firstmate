@@ -1,0 +1,31 @@
+== codex codex-cli 0.160.0; target commit 8b388e2 extracted to a temp checkout; throwaway lab FM_HOME=/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T//fm-lab.yg7piY
+== watcher armed inside the Codex sandbox by command A: watcher: started pid=36100 (beacon fresh)
+== lock: pid=36100 pid-identity=darwin-kinfo-start=1791094136.437576 comm-hex=62617368
+
+== command C (separate sandboxed command): raw ps/kill vs fm_pid_alive / fm_watcher_healthy on the watcher A started
+raw ps rc=126
+raw kill -0 rc=1
+fm_pid_alive: alive
+fm_pid_identity: darwin-kinfo-start=1791094136.437576 comm-hex=62617368
+fm_watcher_healthy: healthy pid=36100
+
+== command D (separate sandboxed command): bin/fm-watch-arm.sh again -> must attach to the live watcher, not start a second
+fm-watch.sh processes for this lab (outside view):
+1
+
+== command E (separate sandboxed command): bin/fm-watch-arm.sh --stop
+watcher: FAILED - pid=36100 did not stop: the sandbox refused the stop signal, because a process started by another sandboxed command cannot be signalled from inside the sandbox; stop it from outside the sandbox
+exit=1
+watcher pid 36100 still alive (outside view): yes
+
+== outside the sandbox: bin/fm-watch-arm.sh --stop
+watcher: none running
+exit=0
+
+== outside the sandbox, from the same canonical checkout path the sandboxed arm recorded: bin/fm-watch-arm.sh --stop
+watcher: stopped pid=36100
+exit=0
+watcher pid 36100 alive afterwards: no
+(note: an earlier outside --stop from the /var/... symlinked spelling of the same checkout printed 'none running' because the lock's watcher-path is the /private/var spelling codex sandbox resolves the cwd to; identity matched both ways, lock was left intact)
+== command D output (re-arm from a separate sandboxed command): watcher: attached pid=36100 (beacon 8s)
+watcher: FAILED - cycle ended without an actionable reason

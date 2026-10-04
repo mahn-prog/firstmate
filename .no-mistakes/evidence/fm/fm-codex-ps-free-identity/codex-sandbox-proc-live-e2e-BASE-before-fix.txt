@@ -1,0 +1,2 @@
+ok - codex codex-cli 0.160.0: the sandbox still refuses ps and foreign kill -0
+not ok - codex codex-cli 0.160.0: the sandbox did not take a dead owner's lock and confirm it: error: cannot locate harness process in ancestry
