@@ -1,0 +1,2 @@
+$ bin/fm-bootstrap.sh   (session-start diagnostics; this session is a real Claude Code process: bin/fm-harness.sh -> claude; lab fleet host is codex)
+HOST_PROFILE: this session runs on claude but the fleet host is codex; to move the whole fleet to claude run: bin/fm-host-switch.sh claude (preview with --dry-run)

@@ -1,0 +1,14 @@
+$ bin/fm-host-switch.sh codex --dry-run    (lab primary on claude; w1 live claude + cancelled run, w2 parked, w3 stopped)
+host switch: (none recorded) -> codex (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: claude -> codex
+secondmate-harness: claude opus -> codex gpt-6.1-sol low
+crew-dispatch.json: replaced by the codex profile's
+host-profile: (absent) -> codex
+no-mistakes agent: claude -> codex in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+no-mistakes codex args: --sandbox workspace-write --model gpt-6.1-sol -c model_reasoning_effort="medium"
+worker w1: relaunch claude/opus/high -> codex/gpt-6.1-sol/medium (standard); run 01M427JFZJFBTRH9R5T34R804H cancelled - worker continues: rerun
+worker w2: unpark (parked) claude/opus/high -> codex/gpt-6.1-sol/medium (standard); no run
+worker w3: stopped (dead), not relaunched; no run; relaunch it later with: bin/fm-control.sh w3 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>
+dry run: nothing changed
+[exit 0]
+NO FILE CHANGED by dry run

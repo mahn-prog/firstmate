@@ -1,0 +1,3 @@
+$ HS_HOME=sm1  bin/fm-host-switch.sh codex --dry-run   (secondmate home BEFORE the primary switch)
+error: this secondmate home's fleet host is 'unset', not 'codex'; the primary firstmate owns the fleet switch
+[exit 2]

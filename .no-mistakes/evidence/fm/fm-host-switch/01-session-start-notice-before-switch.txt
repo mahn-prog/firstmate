@@ -1,0 +1,13 @@
+$ # home with NO saved profile, crew harness codex, session claude (mixed crew harness, not opted in)
+$ fm-host-switch.sh check --session-host claude
+[exit 0 ; output above, empty = silent]
+
+$ # lab primary: claude + codex profiles saved, no switch applied yet, live crew harness claude
+$ fm-host-switch.sh check --session-host codex
+HOST_PROFILE: this session runs on codex but the fleet host is claude; to move the whole fleet to codex run: bin/fm-host-switch.sh codex (preview with --dry-run)
+[exit 0]
+$ fm-host-switch.sh check --session-host grok   (no grok profile)
+HOST_PROFILE: this session runs on grok but the fleet host is claude, and no grok profile is saved; save one while the fleet runs on grok (bin/fm-host-switch.sh save grok) before switching
+[exit 0]
+$ fm-host-switch.sh check   (session host auto-detected by bin/fm-harness.sh from this real Claude Code process)
+[exit 0; detected: claude]

@@ -1,0 +1,34 @@
+$ bin/fm-host-switch.sh codex    (RERUN #2, after the lab secondmate home became a valid firstmate home)
+host switch: codex -> codex (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: codex (unchanged)
+secondmate-harness: codex gpt-6.1-sol low (unchanged)
+crew-dispatch.json: unchanged
+host-profile: codex (unchanged)
+no-mistakes agent: codex (unchanged) in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+push: inherited config to live secondmate homes
+secondmate sm1: already on codex; steer it to run bin/fm-host-switch.sh codex in its home
+worker w1: already on codex; unchanged
+worker w2: already on codex; unchanged
+worker w3: stopped (dead), not relaunched; no run; relaunch it later with: bin/fm-control.sh w3 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>
+ok config switched to the codex profile
+FAILED push inherited config to secondmate homes: WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode. config-push: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i -> live secondmate homes secondmate sm1 (/private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-
+ok steer secondmate sm1 to switch its own workers
+record: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T014149Z-59575
+[exit 1]
+
+== secondmate home config after push:
+backend
+crew-dispatch.json
+crew-harness
+host-profile
+host-worker-tiers
+-- host-profile
+codex
+-- crew-harness
+codex
+-- host-worker-tiers
+claude
+codex
+codex strong codex gpt-6-astra high
+codex standard codex gpt-6.1-sol medium
+codex light codex gpt-6.1-luna low

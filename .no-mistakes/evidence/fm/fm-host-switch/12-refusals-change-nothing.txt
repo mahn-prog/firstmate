@@ -1,0 +1,10 @@
+$ bin/fm-host-switch.sh opencode    (profile missing crew-dispatch.json and no-mistakes-agent)
+error: profile 'opencode' is incomplete: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/config/host-profiles/opencode/crew-dispatch.json is missing or empty
+[exit 2]
+$ bin/fm-host-switch.sh pi    (no saved profile)
+error: no saved profile for 'pi' in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/config/host-profiles; save one with: bin/fm-host-switch.sh save pi (while the fleet runs on pi)
+[exit 2]
+$ bin/fm-host-switch.sh claude    (reviewer config uses a flow-style agent_args_override this switch does not edit)
+error: no-mistakes config /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml has a structure this switch does not edit (it needs exactly one top-level agent: line and a block-style agent_args_override); change it by hand
+[exit 2]
+UNCHANGED: config, reviewer config and task state identical before and after all three refusals

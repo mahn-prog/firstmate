@@ -1,0 +1,45 @@
+== data/w1/brief.md progress note (what the relaunched codex worker reads)
+## Progress note (2026-10-04T01:24:52Z)
+
+This task was relaunched. Continue from here; the local copy and every
+uncommitted change are exactly as the previous worker left them.
+
+First, check your instruction inbox: list /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/w1.inbox/*.msg, act on
+each message in numeric order, then mv each handled file into
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/w1.inbox/handled/. A steer sent before the relaunch survives there.
+
+Firstmate moved the whole fleet to the codex host and relaunched you on it; nothing in your local copy changed. Read your inbox and any handoff you keep, then continue the task from its current state. Your validation run 01M427JFZJFBTRH9R5T34R804H ended cancelled before the switch. Continue it on codex now: run `no-mistakes axi status`; it names no sync step; then run `no-mistakes rerun` from the preserved branch head and drive the new run with `no-mistakes axi status` and `no-mistakes axi respond`. Never abort, force, reset or discard anything.
+
+== data/w2/brief.md progress note
+## Progress note (2026-10-04T01:29:35Z)
+
+This task was relaunched. Continue from here; the local copy and every
+uncommitted change are exactly as the previous worker left them.
+
+First, check your instruction inbox: list /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/w2.inbox/*.msg, act on
+each message in numeric order, then mv each handled file into
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/w2.inbox/handled/. A steer sent before the relaunch survives there.
+
+Firstmate parked this worker (stopped its agent while the task waited in state 'pr-ready') at 2026-10-04T01:14Z and relaunched it because: the fleet moved to the codex host. Nothing in the local copy changed while it was parked. Read your inbox as instructed above and any handoff you keep, then continue the task from its current state. Firstmate moved the whole fleet to the codex host and relaunched you on it; nothing in your local copy changed. Read your inbox and any handoff you keep, then continue the task from its current state.
+
+== fm-w1 pane (relaunched worker)
+  Folder access
+  /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/wt-w1
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/projects/demo
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even without a model request. Continue only if you
+  trust these files. Your trust decision will be saved.
+› 1. Trust and continue
+  2. Quit
+  enter continue · esc quit
+
+== fm-w2 pane
+  Folder access
+  /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/wt-w2
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root:
+  /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/projects/demo
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code automatically, even without a model request. Continue only if you
+  trust these files. Your trust decision will be saved.
+› 1. Trust and continue
+  2. Quit
+  enter continue · esc quit

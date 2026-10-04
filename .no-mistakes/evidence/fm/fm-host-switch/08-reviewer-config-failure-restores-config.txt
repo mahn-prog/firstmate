@@ -1,0 +1,45 @@
+== before (config hashes + worker harness)
+83c54837c63f08975f86d42ab5628f9b7209a5b9  config/host-profile
+83c54837c63f08975f86d42ab5628f9b7209a5b9  config/crew-harness
+20d921a18dafa1e05b740b552a06567ddade6375  config/secondmate-harness
+4265ff78dae46fa7c43fe81e54ec3a15ab096b22  config/crew-dispatch.json
+fd7618d4ce5c28a895f83f1b71297327fa7731c4  config/host-worker-tiers
+c03a39ed72d7d7a2fb2bcb66dfab318fc4295aad  nm/config.yaml
+harness=codex
+harness=codex
+
+$ chmod a-w <NM_HOME>   # the reviewer config can no longer be replaced
+$ bin/fm-host-switch.sh claude
+host switch: codex -> claude (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: codex -> claude
+secondmate-harness: codex gpt-6.1-sol low -> claude opus
+crew-dispatch.json: replaced by the claude profile's
+host-profile: codex -> claude
+no-mistakes agent: codex -> claude in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+no-mistakes claude args: --permission-mode bypassPermissions
+push: inherited config to live secondmate homes
+secondmate sm1: relaunch on claude opus, then steer it to run bin/fm-host-switch.sh claude in its home
+worker w1: relaunch codex/gpt-6.1-sol/medium -> claude/opus/high (standard); run unreadable - worker checks it after relaunch
+worker w2: relaunch codex/gpt-6.1-sol/medium -> claude/opus/high (standard); no run
+worker w3: already on claude; unchanged
+ok config switched to the claude profile
+cp: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml.host-switch.56299: Permission denied
+FAILED no-mistakes config not changed; restored the previous config: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+record: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T015525Z-56299
+switch stopped before relaunching anything
+[exit 1]
+
+== after
+83c54837c63f08975f86d42ab5628f9b7209a5b9  config/host-profile
+83c54837c63f08975f86d42ab5628f9b7209a5b9  config/crew-harness
+20d921a18dafa1e05b740b552a06567ddade6375  config/secondmate-harness
+4265ff78dae46fa7c43fe81e54ec3a15ab096b22  config/crew-dispatch.json
+fd7618d4ce5c28a895f83f1b71297327fa7731c4  config/host-worker-tiers
+c03a39ed72d7d7a2fb2bcb66dfab318fc4295aad  nm/config.yaml
+harness=codex
+harness=codex
+
+IDENTICAL: config/ restored byte-for-byte, reviewer config untouched, no worker relaunched
+-- /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T015525Z-56299//actions.log
+2026-10-04T01:55:35Z ok config switched to the claude profile
+2026-10-04T01:55:40Z FAILED no-mistakes config not changed; restored the previous config: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml

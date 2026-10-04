@@ -1,0 +1,38 @@
+== secondmate home /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab-sm1.UkJksj: inherited config pushed by the primary
+host-profile: codex
+host-worker-tiers:
+  claude
+  codex
+  codex strong codex gpt-6-astra high
+  codex standard codex gpt-6.1-sol medium
+  codex light codex gpt-6.1-luna low
+(the claude profile has NO worker-tiers file; it is still published as a host)
+crew-dispatch.json
+crew-harness
+no-mistakes-agent
+no-mistakes-args
+secondmate-harness
+
+$ HS_HOME=<secondmate home> bin/fm-host-switch.sh codex --dry-run
+host switch: codex -> codex (scope: home, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab-sm1.UkJksj)
+worker sw1: stopped (dead), not relaunched; no run; relaunch it later with: bin/fm-control.sh sw1 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>
+dry run: nothing changed
+[exit 0]
+
+$ HS_HOME=<secondmate home> bin/fm-host-switch.sh verify
+fleet host: codex
+OLD worker sw1: claude
+[exit 1]
+
+$ HS_HOME=<secondmate home> bin/fm-host-switch.sh check --session-host codex
+HOST_PROFILE: 1 worker(s) in this home still run on another host than codex: sw1 (claude); run: bin/fm-host-switch.sh codex (preview with --dry-run)
+[exit 0]
+
+$ HS_HOME=<secondmate home> bin/fm-host-switch.sh claude   (not the fleet host: must refuse)
+error: this secondmate home's fleet host is 'codex', not 'claude'; the primary firstmate owns the fleet switch
+[exit 2]
+
+== the real codex secondmate's own run record (it ran the home-scoped switch itself after the steer)
+-- /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab-sm1.UkJksj/state/host-switch/20261004T014619Z-94690/
+host switch: codex -> codex (scope: home, home: /private/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab-sm1.UkJksj)
+worker sw1: stopped (unreadable), not relaunched; run unreadable - worker checks it after relaunch; relaunch it later with: bin/fm-control.sh sw1 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>

@@ -1,0 +1,46 @@
+$ bin/fm-host-switch.sh codex --dry-run   (w3 has a validation run actively running, started under the lab reviewer)
+host switch: codex -> codex (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: codex (unchanged)
+secondmate-harness: codex gpt-6.1-sol low (unchanged)
+crew-dispatch.json: unchanged
+host-profile: codex (unchanged)
+no-mistakes agent: codex (unchanged) in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+push: inherited config to live secondmate homes
+secondmate sm1: already on codex; steer it to run bin/fm-host-switch.sh codex in its home
+worker w1: already on codex; unchanged
+worker w2: already on codex; unchanged
+worker w3: stopped (dead), not relaunched; run 01M42A71FEAC40FE1THPNJ9QKR active (running) - stays on its start agent, never aborted; relaunch it later with: bin/fm-control.sh w3 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>
+dry run: nothing changed
+[exit 0]
+
+$ bin/fm-host-switch.sh verify
+fleet host: codex
+ok secondmate sm1: codex
+ok worker w1: codex
+CHECK run 01M427JFZJFBTRH9R5T34R804H of w1: ended cancelled; continue it with no-mistakes rerun
+ok worker w2: codex
+OLD worker w3: claude
+[exit 1]
+
+$ bin/fm-host-switch.sh claude --dry-run   (the switch back: what opening Firstmate on Claude would do)
+host switch: codex -> claude (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: codex -> claude
+secondmate-harness: codex gpt-6.1-sol low -> claude opus
+crew-dispatch.json: replaced by the claude profile's
+host-profile: codex -> claude
+no-mistakes agent: codex -> claude in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+no-mistakes claude args: --permission-mode bypassPermissions
+push: inherited config to live secondmate homes
+secondmate sm1: relaunch on claude opus, then steer it to run bin/fm-host-switch.sh claude in its home
+worker w1: relaunch codex/gpt-6.1-sol/medium -> claude/opus/high (standard); run 01M427JFZJFBTRH9R5T34R804H cancelled - worker continues: rerun
+worker w2: relaunch codex/gpt-6.1-sol/medium -> claude/opus/high (standard); no run
+worker w3: already on claude; unchanged
+dry run: nothing changed
+[exit 0]
+
+== w3 run after the switch commands (must still be running, never aborted):
+run:
+  id: "01M42A71FEAC40FE1THPNJ9QKR"
+  branch: fm/w3
+  status: running
+  head: 904cd8ea

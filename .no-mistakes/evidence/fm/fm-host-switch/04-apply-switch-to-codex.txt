@@ -1,0 +1,22 @@
+$ bin/fm-host-switch.sh codex    (APPLY, lab primary)
+host switch: (none recorded) -> codex (scope: fleet, home: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i)
+crew-harness: claude -> codex
+secondmate-harness: claude opus -> codex gpt-6.1-sol low
+crew-dispatch.json: replaced by the codex profile's
+host-profile: (absent) -> codex
+no-mistakes agent: claude -> codex in /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/nm/config.yaml
+no-mistakes codex args: --sandbox workspace-write --model gpt-6.1-sol -c model_reasoning_effort="medium"
+push: inherited config to live secondmate homes
+secondmate sm1: already on codex; steer it to run bin/fm-host-switch.sh codex in its home
+worker w1: relaunch claude/opus/high -> codex/gpt-6.1-sol/medium (standard); run 01M427JFZJFBTRH9R5T34R804H cancelled - worker continues: rerun
+worker w2: unpark (parked) claude/opus/high -> codex/gpt-6.1-sol/medium (standard); no run
+worker w3: stopped (dead), not relaunched; no run; relaunch it later with: bin/fm-control.sh w3 relaunch --harness codex --model gpt-6.1-sol --effort medium --note <why>
+ok config switched to the codex profile
+ok no-mistakes agent set to codex (new runs only; active runs keep their agent)
+ok push inherited config to secondmate homes
+ok steer secondmate sm1 to switch its own workers
+ok relaunch worker w1 on codex/gpt-6.1-sol/medium
+ok unpark worker w2 on codex/gpt-6.1-sol/medium
+record: /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T012311Z-39942
+$LAB/hs codex  7.20s user 12.80s system 3% cpu 9:24.49 total
+[exit 0]

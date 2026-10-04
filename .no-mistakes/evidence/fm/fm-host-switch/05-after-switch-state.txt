@@ -1,0 +1,54 @@
+== panes on the lab tmux server
+home cmd=zsh
+fm-w1 cmd=node
+fm-w2 cmd=node
+fm-w3 cmd=zsh
+fm-sw1 cmd=zsh
+fm-sm1 cmd=node
+== worker records (harness/model/effort)
+w1: harness=codex model=gpt-6.1-sol effort=medium 
+w2: harness=codex model=gpt-6.1-sol effort=medium 
+w3: harness=claude model=opus effort=high 
+== park record for w2 retired?
+worker-park.log
+== config/
+host-profile: codex
+crew-harness: codex
+secondmate-harness: codex gpt-6.1-sol low
+crew-dispatch.json default: {"harness":"codex","model":"gpt-6.1-sol","effort":"low"}
+== config/host-worker-tiers
+claude
+codex
+codex strong codex gpt-6-astra high
+codex standard codex gpt-6.1-sol medium
+codex light codex gpt-6.1-luna low
+== reviewer config diff (before -> after)
+4c4
+< agent: claude
+---
+> agent: codex
+== switch record /var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T012311Z-39942/
+actions.log
+config-after
+config-before
+no-mistakes-config.before.yaml
+plan.txt
+
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T012311Z-39942//config-after:
+crew-dispatch.json
+crew-harness
+host-profile
+host-worker-tiers
+secondmate-harness
+
+/var/folders/c4/jspvwmfj2qldk2_82kcpb_r80000gn/T/fm-lab.ydHg1i/state/host-switch/20261004T012311Z-39942//config-before:
+crew-dispatch.json
+crew-harness
+secondmate-harness
+-- actions.log
+2026-10-04T01:23:12Z ok config switched to the codex profile
+2026-10-04T01:23:12Z ok no-mistakes agent set to codex (new runs only; active runs keep their agent)
+2026-10-04T01:23:36Z ok push inherited config to secondmate homes
+2026-10-04T01:24:37Z ok steer secondmate sm1 to switch its own workers
+2026-10-04T01:29:01Z ok relaunch worker w1 on codex/gpt-6.1-sol/medium
+2026-10-04T01:31:55Z ok unpark worker w2 on codex/gpt-6.1-sol/medium
