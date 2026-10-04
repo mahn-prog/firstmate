@@ -76,6 +76,10 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-gemini-lib.sh
 . "$SCRIPT_DIR/fm-gemini-lib.sh"
+# Process fields come from the process-facts library, which also answers inside
+# a sandbox where ps cannot run (a Codex session on macOS).
+# shellcheck source=bin/fm-proc-lib.sh
+. "$SCRIPT_DIR/fm-proc-lib.sh"
 
 # Print the harness named by a verified environment marker, or nothing when no
 # marker is present. Markers only report what the environment CLAIMS; detect_own
@@ -161,9 +165,9 @@ harness_marker() {
 ancestry_names_omp() {
   local pid=$$ comm
   for _ in 1 2 3 4 5 6 7 8; do
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
+    comm=$(fm_proc_field comm "$pid") || return 1
     [ "$(basename -- "$comm")" = omp ] && return 0
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    pid=$(fm_proc_field ppid "$pid" | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
   done
   return 1
@@ -179,7 +183,7 @@ ancestry_names_omp() {
 #          used only when no marker is present.
 harness_process_verdict() {  # <pid>
   local pid=$1 comm args argv0
-  comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 0
+  comm=$(fm_proc_field comm "$pid") || return 0
   argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
   if fm_cursor_process_matches "$comm" '' "$argv0"; then
     echo "comm cursor"
@@ -241,7 +245,7 @@ harness_process_verdict() {  # <pid>
     devin) echo "comm devin"; return ;;
     node*|python*)
       # Bare interpreter: match the harness name in its script path.
-      args=$(ps -o args= -p "$pid" 2>/dev/null)
+      args=$(fm_proc_field args "$pid")
       if fm_gemini_args_are_gemini "$args"; then
         echo "args gemini"
         return
@@ -264,7 +268,7 @@ harness_ancestry() {  # [<pid>]
   for _ in 1 2 3 4 5 6 7 8; do
     verdict=$(harness_process_verdict "$pid")
     [ -z "$verdict" ] || { echo "$verdict"; return; }
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    pid=$(fm_proc_field ppid "$pid" | tr -d ' ')
     # Stop only once the walk has EXAMINED the top of the chain. Inside a PID
     # namespace the harness itself is pid 1 - a container, or the `codex sandbox`
     # this boundary was proven in - so breaking as soon as the next pid is 1

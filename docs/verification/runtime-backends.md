@@ -43,6 +43,44 @@ The restricted runner's earlier launch/relaunch attempts failed during fixture i
 Those checks were not rerun during this evidence-only reassessment, and existing suite fixture/race limitations and the unresolved configuration-delivery comparison remain outside this live proof.
 No complete-suite or broad regression pass is claimed; remote CI remains required before PR readiness.
 
+## Codex sandbox process facts
+
+Verified 2026-10-03 on codex-cli 0.160.0, macOS 26 (Darwin 25.5.0) arm64.
+
+Every command a Codex session runs on macOS executes in Codex's seatbelt sandbox, where `/bin/ps` (setuid root) cannot execute and `kill -0` on any process outside the current command is refused:
+
+```sh
+codex sandbox -c 'sandbox_mode="workspace-write"' -- /bin/bash -c \
+  'ps -o pid= -p $$; echo ps_rc=$?; kill -0 1; echo kill_rc=$?'
+```
+
+```text
+/bin/ps: Operation not permitted
+ps_rc=126
+kill: (1) - Operation not permitted
+kill_rc=1
+```
+
+The bare `codex sandbox` resolves to read-only, so the workspace-write mode is passed explicitly.
+Codex's own seatbelt policy allows the sysctl names `kern.proc.pid.*` for any pid, so the kernel process record (parent, process group, command name, start time, state) stays readable there; argv and the executable path do not.
+`bin/fm-proc-lib.sh` reads that record wherever ps cannot execute, and macOS pid identity is the record's microsecond start time plus command name in every context, so an identity recorded inside the sandbox matches the one computed outside it.
+
+In a throwaway home under `TMPDIR` whose lock names an exited pid, the session lock is taken and confirmed inside the sandbox:
+
+```sh
+codex sandbox -c 'sandbox_mode="workspace-write"' -- /usr/bin/env FM_HOME="$HOME_DIR" /bin/bash -c \
+  'bash bin/fm-lock.sh; bash bin/fm-lock.sh; bash bin/fm-lock.sh status'
+```
+
+```text
+lock acquired: harness pid 67809
+lock acquired: harness pid 67809
+lock: held by live harness pid 67809
+```
+
+`tests/fm-codex-sandbox-proc-live-e2e.test.sh` is the command that refreshes this record, and its header owns what it checks.
+The portable half, `tests/fm-proc-lib.test.sh`, pins the same verdicts with a ps that fails as the sandbox makes it fail and a refused `kill -0`.
+
 ## Harness detection precedence
 
 Firstmate's own harness comes from two kinds of evidence, and `bin/fm-harness.sh` owns how they combine: an environment marker names its harness, and the nearest harness process in the parent chain proves who owns the process tree.
