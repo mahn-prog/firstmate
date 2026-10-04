@@ -38,8 +38,8 @@ cleanup_live() {
 trap cleanup_live EXIT
 
 LIVE_PID=
-start_live() {  # sets LIVE_PID to a live background process
-  sleep 120 &
+start_live() {  # [seconds] - sets LIVE_PID to a live background process
+  sleep "${1:-120}" &
   LIVE_PID=$!
   LIVE_PIDS+=("$LIVE_PID")
 }
@@ -122,7 +122,9 @@ test_identity_is_the_same_inside_and_outside_the_sandbox() {
   local live other inside outside other_id
   start_live
   live=$LIVE_PID
-  start_live
+  # A different command line: the Linux identity is the start tick plus argv,
+  # so two identical processes started within one tick share it by design.
+  start_live 121
   other=$LIVE_PID
   inside=$(proc_eval sandbox "fm_pid_identity $live") \
     || fail "sandbox: no identity for a live process"
