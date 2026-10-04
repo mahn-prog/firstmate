@@ -24,6 +24,7 @@ install_runner() {  # <case-dir>
   mkdir -p "$dir/bin" "$dir/home/state" "$dir/home/data" "$dir/home/config"
   cp "$ROOT/bin/fm-afk-return.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/"
+  cp "$ROOT/bin/fm-proc-lib.sh" "$dir/bin/"
   cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/"
   # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
   # wedge detector's bounded worktree write probe.
@@ -477,7 +478,7 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
   for harness in claude pi; do
     dir="$TMP_ROOT/window-pointer-$harness"
     install_runner "$dir"
-    for f in fm-supervision-engine-lib.sh fm-harness.sh fm-cursor-lib.sh fm-gemini-lib.sh; do
+    for f in fm-supervision-engine-lib.sh fm-harness.sh fm-proc-lib.sh fm-cursor-lib.sh fm-gemini-lib.sh; do
       cp "$ROOT/bin/$f" "$dir/bin/"
     done
     : > "$dir/home/config/supervision-host"

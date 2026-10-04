@@ -212,7 +212,7 @@ worker_alive() {
   local pid started age
   pid=$(status_get pid)
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 1
+  fm_pid_alive "$pid" || return 1
   started=$(status_get started)
   age=$(age_of "$started")
   case "$age" in ''|*[!0-9]*) return 0 ;; esac
@@ -392,7 +392,7 @@ EOF
       if [ "$claim_generation" = "$generation" ]; then
         case "$claim_pid" in
           ''|*[!0-9]*) ;;
-          *) kill -0 "$claim_pid" 2>/dev/null && claim_live=1 ;;
+          *) fm_pid_alive "$claim_pid" && claim_live=1 ;;
         esac
       fi
       [ "$claim_live" -eq 1 ] || rm -f "$CLAIM_FILE" 2>/dev/null || true

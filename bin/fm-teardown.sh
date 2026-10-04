@@ -326,6 +326,7 @@ for _teardown_source in \
   fm-composer-lib.sh \
   fm-cursor-lib.sh \
   fm-nm-run-lib.sh \
+  fm-proc-lib.sh \
   fm-wake-lib.sh \
   fm-lease-lib.sh
 do

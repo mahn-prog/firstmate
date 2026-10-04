@@ -81,6 +81,7 @@ import { TextDecoder, promisify } from "node:util";
 const SELF = fileURLToPath(import.meta.url);
 const CODE_ROOT = path.dirname(path.dirname(SELF));
 const LAUNCH_BARRIER = path.join(CODE_ROOT, "bin", "fm-extension-launch-barrier.mjs");
+const PROC_LIB = path.join(CODE_ROOT, "bin", "fm-proc-lib.sh");
 const MANIFEST_NAME = "firstmate-extension.json";
 const HOST_PROTOCOLS = [1];
 const PROCESS_EVENT_CAPABILITY = "process-event-adapter";
@@ -944,7 +945,9 @@ async function pidIdentity(pid) {
     }
     return `linux-starttime=${fields[19]} cmdline-hex=${cmdline.toString("hex")}`;
   }
-  return capturedProcessOutput("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="]);
+  // Elsewhere the identity comes from the shell's fm_pid_identity itself, so a
+  // claim identity the shell recorded always compares equal here.
+  return capturedProcessOutput("/bin/bash", ["-c", '. "$1" && fm_pid_identity "$2"', "fm-extension", PROC_LIB, String(pid)]);
 }
 
 async function selfIdentity() {

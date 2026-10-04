@@ -435,14 +435,20 @@ fi
 # Home-scoped stop: only the watcher pid recorded in THIS home's lock. Waits
 # for it to actually exit, so a fresh watcher either takes a released lock or
 # reclaims a now-dead-pid stale lock instead of seeing the dying one as a live
-# holder and no-opping. Sets STOPPED_PID to the pid it stopped.
+# holder and no-opping. Sets STOPPED_PID to the pid it stopped. A stop signal
+# the system refuses fails at once with the reason; inside the Codex sandbox
+# that is every watcher an earlier command started, because the sandbox refuses
+# signals to processes outside the current command.
 STOPPED_PID=
 stop_home_watcher() {
   local lock_pid i
   lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
   fm_pid_alive "$lock_pid" || return 0
   if fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$lock_pid" "$FM_HOME"; then
-    kill -TERM "$lock_pid" 2>/dev/null || true
+    if ! kill -TERM "$lock_pid" 2>/dev/null && fm_pid_alive "$lock_pid"; then
+      echo "watcher: FAILED - pid=$lock_pid did not stop: the sandbox refused the stop signal, because a process started by another sandboxed command cannot be signalled from inside the sandbox; stop it from outside the sandbox"
+      return 1
+    fi
     i=0
     while [ "$i" -lt 50 ] && fm_pid_alive "$lock_pid"; do
       sleep 0.1

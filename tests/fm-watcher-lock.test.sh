@@ -1340,6 +1340,13 @@ test_stopped_watcher_is_live_but_stale_then_exit_is_classified() {
   pass "SIGSTOP distinguishes live PID from stale beacon and termination records the exit class"
 }
 
+# The ps fallback is reached on macOS only when the kernel process record is
+# unreadable, which a perl that cannot run reproduces.
+no_kernel_record() {  # <bin-dir>
+  printf '#!/bin/sh\nexit 2\n' > "$1/perl"
+  chmod +x "$1/perl"
+}
+
 test_pid_identity_is_locale_invariant() {
   # The portable fallback records its process identity under one locale, then
   # arm/guard/turn-end re-read it under the machine's ambient locale. ps's lstart
@@ -1349,7 +1356,10 @@ test_pid_identity_is_locale_invariant() {
   # exported LC_ALL/LC_TIME. This stays deterministic on CI even where an alternate
   # locale like ko_KR.UTF-8 is not installed (the equality then holds trivially).
   local live no_proc fakebin locale_log baseline via_lc_all via_lc_time
-  local real_first real_second observed
+  local real_first real_second observed no_record_bin
+  no_record_bin="$TMP_ROOT/locale-no-record"
+  mkdir -p "$no_record_bin"
+  no_kernel_record "$no_record_bin"
   sleep 300 &
   live=$!
   no_proc="$TMP_ROOT/no-proc"
@@ -1371,6 +1381,7 @@ stamp=$(date -d @1784094040 '+%a %b %e %H:%M:%S %Y' 2>/dev/null) \
 printf '%s sleep 300\n' "$stamp"
 SH
   chmod +x "$fakebin/ps"
+  no_kernel_record "$fakebin"
   baseline=$(PATH="$fakebin:$PATH" FAKE_PS_LOCALE_LOG="$locale_log" FM_PROC_ROOT_OVERRIDE="$no_proc" LC_ALL=C bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
   via_lc_all=$(PATH="$fakebin:$PATH" FAKE_PS_LOCALE_LOG="$locale_log" FM_PROC_ROOT_OVERRIDE="$no_proc" LC_ALL=ko_KR.UTF-8 bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
   via_lc_time=$(PATH="$fakebin:$PATH" FAKE_PS_LOCALE_LOG="$locale_log" FM_PROC_ROOT_OVERRIDE="$no_proc" LC_TIME=ko_KR.UTF-8 bash -c 'unset LC_ALL; . "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
@@ -1378,8 +1389,8 @@ SH
   real_first=
   real_second=
   if LC_ALL=C ps -p "$live" -o lstart= -o command= >/dev/null 2>&1; then
-    real_first=$(FM_PROC_ROOT_OVERRIDE="$no_proc" LC_ALL=C bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
-    real_second=$(FM_PROC_ROOT_OVERRIDE="$no_proc" LC_TIME=ko_KR.UTF-8 bash -c 'unset LC_ALL; . "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+    real_first=$(PATH="$no_record_bin:$PATH" FM_PROC_ROOT_OVERRIDE="$no_proc" LC_ALL=C bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+    real_second=$(PATH="$no_record_bin:$PATH" FM_PROC_ROOT_OVERRIDE="$no_proc" LC_TIME=ko_KR.UTF-8 bash -c 'unset LC_ALL; . "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
   fi
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
@@ -1406,17 +1417,20 @@ test_pid_identity_is_terminal_width_invariant() {
   # A truncated command then never equals the recorded one and every fleet command
   # is denied (issue #799). A long sleep argument makes the cut visible on GNU and
   # BSD ps alike, so both readings must be byte-identical and carry the whole command.
-  local live no_proc narrow wide
+  local live no_proc narrow wide no_record_bin
   local long_arg=300.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
   no_proc="$TMP_ROOT/no-width-proc"
   if ! LC_ALL=C ps -p "$$" -o lstart= -o command= >/dev/null 2>&1; then
     pass "terminal-width check skipped where ps -o lstart= is unsupported"
     return
   fi
+  no_record_bin="$TMP_ROOT/width-no-record"
+  mkdir -p "$no_record_bin"
+  no_kernel_record "$no_record_bin"
   sleep "$long_arg" &
   live=$!
-  narrow=$(COLUMNS=20 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
-  wide=$(COLUMNS=1000 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  narrow=$(PATH="$no_record_bin:$PATH" COLUMNS=20 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  wide=$(PATH="$no_record_bin:$PATH" COLUMNS=1000 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
   kill "$live" 2>/dev/null || true
   wait "$live" 2>/dev/null || true
   [ -n "$wide" ] || fail "fm_pid_identity produced no identity under a wide COLUMNS"
