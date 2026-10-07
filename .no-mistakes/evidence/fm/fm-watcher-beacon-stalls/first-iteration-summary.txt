@@ -1,0 +1,14 @@
+Lab homes minted with bin/fm-lab-home.sh; each seeded with 590 settled pending-reply records
+(cloned from one record resolved through the real lib) + 1 resolved/open-escalation + 1 resolved/closed-escalation
++ 1 awaiting_report whose correlated report is already in hibit.status. Watcher launched as fm-watch-arm.sh forks
+its child (FM_WATCH_HANDLING_SUCCESSOR=1 on run 4+), FM_POLL=5 (beacon grace = 300s).
+
+FIX (0c21569) first run: start 1791370903, beacon 1791370907, open escalation closed 1791370912 (+5s),
+  awaiting record resolved via status, signal wake delivered ~1791370949 (includes 30s SIGNAL_GRACE).
+BASE (c4b5dc4) first run: start 1791371283, beacon 1791371289, open escalation closed 1791372038 (+755s),
+  awaiting resolved by 1791372045, signal wake delivered 1791372089 -> one iteration ~800s with beacon untouched.
+BASE steady-state: consecutive beacon touches 652s apart. FIX steady-state: 9-32s apart (POLL 5 + work, under load).
+Second fm-watch.sh launch while running: see second-launch-transcript.txt
+  BASE -> "lock held by live pid 47561 but heartbeat is stale for 453s (>300s)" exit 1 (the reported symptom)
+  FIX  -> "already running pid 47598" exit 0
+Standalone fm_pending_reply_tick on the FIX lab state (593 records): 0.80s cold, 0.19s warm.

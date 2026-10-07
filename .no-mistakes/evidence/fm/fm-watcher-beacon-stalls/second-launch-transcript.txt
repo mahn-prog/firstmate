@@ -1,0 +1,6 @@
+== second watcher launch against FIX lab (beat age 11s, lock pid )
+watcher: already running pid 47598
+exit=0
+== second watcher launch against BASE lab (beat age 451s)
+watcher: lock held by live pid 47561 but heartbeat is stale for 453s (>300s); inspect or stop that watcher before re-arming.
+exit=1

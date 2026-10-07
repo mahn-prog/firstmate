@@ -1,0 +1,42 @@
+# Steady-state beacon (.last-watcher-beat) touches, FM_POLL=5, 593 pending-reply records (590 settled)
+## FIX watcher (target 0c21569):
++16s gap=858s
++30s gap=14s
++45s gap=15s
++62s gap=17s
++77s gap=15s
++90s gap=13s
++103s gap=13s
++129s gap=26s
++157s gap=28s
++170s gap=13s
++183s gap=13s
++195s gap=12s
++210s gap=15s
++222s gap=12s
++233s gap=11s
++244s gap=11s
++260s gap=16s
++273s gap=13s
++296s gap=23s
++328s gap=32s
++339s gap=11s
++352s gap=13s
++364s gap=12s
++385s gap=21s
++395s gap=10s
++410s gap=15s
++419s gap=9s
++432s gap=13s
++443s gap=11s
++452s gap=9s
++464s gap=12s
++474s gap=10s
++496s gap=22s
++1233s gap=737s
++1245s gap=12s
++1256s gap=11s
+## BASE watcher (c4b5dc4):
++15s gap=834s
++667s gap=652s
+(note: the FIX gap ~ +500s..+1240s is the adversarial newline-filename fallback iteration; removed at 714s)

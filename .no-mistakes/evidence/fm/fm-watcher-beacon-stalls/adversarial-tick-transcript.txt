@@ -1,0 +1,4 @@
+no-nl: records=63 tick_seconds=2.93
+   dupkey closed: escalation_closed_epoch=1791372732   plainopen closed: escalation_closed_epoch=1791372733   unreadable perms: ----------
+with-nl: records=65 tick_seconds=73.96
+   dupkey closed: escalation_closed_epoch=1791372804   plainopen closed: escalation_closed_epoch=1791372807   unreadable perms: ----------
