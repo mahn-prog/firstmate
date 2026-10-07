@@ -1445,20 +1445,55 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   return 0
 }
 
+# Print one verdict line per record path read from stdin, in input order: 1
+# when the record is settled (its last phase is resolved and it has no
+# escalation still waiting to be closed), else 0. One awk pass replaces the
+# per-record reads and correlation lock that made every watcher poll cost time
+# proportional to all resolved records ever kept. Last value wins, as in
+# fm_pending_reply_get; an unreadable record reads as unsettled.
+_fm_pending_reply_settled_verdicts() {
+  awk '
+    {
+      path = $0; phase = ""; escalated = ""; closed = ""
+      while ((rc = (getline line < path)) > 0) {
+        if (line ~ /^phase=/) phase = substr(line, 7)
+        else if (line ~ /^escalated_epoch=/) escalated = substr(line, 17)
+        else if (line ~ /^escalation_closed_epoch=/) closed = substr(line, 25)
+      }
+      close(path)
+      print ((rc == 0 && phase == "resolved" && (escalated == "" || closed != "")) ? 1 : 0)
+    }
+  '
+}
+
 # Scan every pending record for this parent state. Safe to call every poll.
 # Never scrapes secondmate conversation; uses only parent status, backend busy
-# state, and optional secondmate-home wrong-home path checks.
+# state, and optional secondmate-home wrong-home path checks. Settled records
+# are skipped from one batch read (_fm_pending_reply_settled_verdicts); when
+# that read cannot be matched to the record list, every record takes the full
+# per-record path.
 fm_pending_reply_tick() {  # <state-dir>
   local state=$1 dir rec corr task_id phase delivered meta backend target label busy sm_home harness remote_host
-  local observation observation_task found i
-  local -a observation_tasks=() observation_values=()
+  local observation observation_task found i verdict r
+  local -a observation_tasks=() observation_values=() records=() verdicts=()
   dir=$(fm_pending_reply_dir "$state")
   [ -d "$dir" ] || return 0
   for rec in "$dir"/*; do
     [ -f "$rec" ] || continue
-    case "$(basename "$rec")" in
+    case "${rec##*/}" in
       .*) continue ;;
     esac
+    records+=("$rec")
+  done
+  [ "${#records[@]}" -gt 0 ] || return 0
+  while IFS= read -r verdict; do
+    verdicts+=("$verdict")
+  done < <(printf '%s\n' "${records[@]}" | _fm_pending_reply_settled_verdicts 2>/dev/null)
+  [ "${#verdicts[@]}" -eq "${#records[@]}" ] || verdicts=()
+  for ((r = 0; r < ${#records[@]}; r++)); do
+    rec=${records[$r]}
+    [ "${verdicts[$r]:-0}" != 1 ] || continue
+    [ -f "$rec" ] || continue
     corr=$(fm_pending_reply_get "$rec" corr_id)
     [ -n "$corr" ] || corr=$(basename "$rec")
     task_id=$(fm_pending_reply_get "$rec" task_id)

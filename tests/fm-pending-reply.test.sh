@@ -1536,6 +1536,55 @@ test_failed_send_discards_undelivered_expectation() {
   pass "failed transport discards undelivered expectation only"
 }
 
+# The watcher runs this tick on every poll, and resolved records are never
+# pruned, so a settled record (resolved with no open escalation to close) must
+# cost the tick no per-record work: holding its correlation lock must not stall
+# the tick. A resolved record whose escalation is still open keeps its close
+# retry.
+test_tick_skips_settled_records_without_their_locks() {
+  local home state settled open_close rec holder ready tick_pid i
+  home=$(setup_parent settled-skip)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=11000
+  settled=$(fm_pending_reply_create "$home" "$state" hibit "settled request")
+  fm_pending_reply_mark_delivered "$state" "$settled"
+  printf 'done [corr=%s]: complete\n' "$settled" > "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$settled" || fail "settled fixture should resolve"
+  [ "$(phase_of "$state" "$settled")" = resolved ] || fail "settled fixture is not resolved"
+
+  open_close=$(fm_pending_reply_create "$home" "$state" hibit "open close request")
+  fm_pending_reply_mark_delivered "$state" "$open_close"
+  rec=$(fm_pending_reply_path "$state" "$open_close")
+  fm_pending_reply_set "$rec" escalated_epoch 10900
+  fm_pending_reply_set "$rec" phase resolved
+  [ -z "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+    || fail "open-close fixture already records a closed escalation"
+
+  ready="$home/holder.ready"
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2" || exit 1; : > "$3"; exec sleep 60' \
+    _ "$ROOT" "$state/.pending-reply-$settled.lock" "$ready" &
+  holder=$!
+  i=0
+  while [ ! -e "$ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  [ -e "$ready" ] || { kill "$holder" 2>/dev/null; fail "lock holder never took the settled record's lock"; }
+
+  fm_pending_reply_tick "$state" &
+  tick_pid=$!
+  i=0
+  while kill -0 "$tick_pid" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$tick_pid" 2>/dev/null; then
+    kill "$tick_pid" "$holder" 2>/dev/null
+    wait "$tick_pid" "$holder" 2>/dev/null
+    fail "tick stalled on a settled record's correlation lock"
+  fi
+  wait "$tick_pid" || fail "tick failed"
+  kill "$holder" 2>/dev/null
+  wait "$holder" 2>/dev/null
+  [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+    || fail "tick skipped a resolved record whose escalation is still open"
+  pass "tick skips settled records without their locks and still closes open escalations"
+}
+
 test_escalated_undelivered_correlation_stays_retryable() {
   local home state corr rec marker delivered_corr delivered_rec open
   home=$(setup_parent escalated-retry)
@@ -1641,5 +1690,6 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
+test_tick_skips_settled_records_without_their_locks
 
 printf 'ok - all pending-reply tests passed\n'
