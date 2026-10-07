@@ -1449,8 +1449,10 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
 # when the record is settled (its last phase is resolved and it has no
 # escalation still waiting to be closed), else 0. One awk pass replaces the
 # per-record reads and correlation lock that made every watcher poll cost time
-# proportional to all resolved records ever kept. Last value wins, as in
-# fm_pending_reply_get; an unreadable record reads as unsettled.
+# proportional to all resolved records ever kept. Settled mirrors the early
+# returns of _fm_pending_reply_close_escalation_locked, so keep the two in step.
+# Last value wins, as in fm_pending_reply_get; an unreadable record reads as
+# unsettled.
 _fm_pending_reply_settled_verdicts() {
   awk '
     {

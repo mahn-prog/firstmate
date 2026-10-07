@@ -1542,7 +1542,7 @@ test_failed_send_discards_undelivered_expectation() {
 # the tick. A resolved record whose escalation is still open keeps its close
 # retry.
 test_tick_skips_settled_records_without_their_locks() {
-  local home state settled open_close rec holder ready tick_pid i
+  local home state settled closed_esc open_close rec holder ready tick_pid i rc
   home=$(setup_parent settled-skip)
   state="$home/state"
   export FM_PENDING_REPLY_NOW=11000
@@ -1551,6 +1551,13 @@ test_tick_skips_settled_records_without_their_locks() {
   printf 'done [corr=%s]: complete\n' "$settled" > "$state/hibit.status"
   fm_pending_reply_try_resolve "$state" "$settled" || fail "settled fixture should resolve"
   [ "$(phase_of "$state" "$settled")" = resolved ] || fail "settled fixture is not resolved"
+
+  closed_esc=$(fm_pending_reply_create "$home" "$state" hibit "closed escalation request")
+  fm_pending_reply_mark_delivered "$state" "$closed_esc"
+  rec=$(fm_pending_reply_path "$state" "$closed_esc")
+  fm_pending_reply_set "$rec" escalated_epoch 10800
+  fm_pending_reply_set "$rec" escalation_closed_epoch 10850
+  fm_pending_reply_set "$rec" phase resolved
 
   open_close=$(fm_pending_reply_create "$home" "$state" hibit "open close request")
   fm_pending_reply_mark_delivered "$state" "$open_close"
@@ -1561,8 +1568,8 @@ test_tick_skips_settled_records_without_their_locks() {
     || fail "open-close fixture already records a closed escalation"
 
   ready="$home/holder.ready"
-  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2" || exit 1; : > "$3"; exec sleep 60' \
-    _ "$ROOT" "$state/.pending-reply-$settled.lock" "$ready" &
+  bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$2" && fm_lock_acquire_wait "$3" || exit 1; : > "$4"; exec sleep 60' \
+    _ "$ROOT" "$state/.pending-reply-$settled.lock" "$state/.pending-reply-$closed_esc.lock" "$ready" &
   holder=$!
   i=0
   while [ ! -e "$ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
@@ -1577,9 +1584,12 @@ test_tick_skips_settled_records_without_their_locks() {
     wait "$tick_pid" "$holder" 2>/dev/null
     fail "tick stalled on a settled record's correlation lock"
   fi
-  wait "$tick_pid" || fail "tick failed"
+  rc=0
+  wait "$tick_pid" || rc=$?
   kill "$holder" 2>/dev/null
   wait "$holder" 2>/dev/null
+  unset FM_PENDING_REPLY_NOW
+  [ "$rc" -eq 0 ] || fail "tick failed"
   [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
     || fail "tick skipped a resolved record whose escalation is still open"
   pass "tick skips settled records without their locks and still closes open escalations"
