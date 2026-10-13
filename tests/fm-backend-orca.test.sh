@@ -564,7 +564,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   [ -n "$staged" ] && [ -f "$staged" ] \
     || fail "spawn did not send Orca a readable staged launch command"
   launch=$(cat "$staged")
-  assert_contains "$launch" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}'" \
+  assert_contains "$launch" "ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --no-chrome --disallowedTools Artifact,ArtifactComments,ArtifactData,Workflow,DesignSync,PushNotification,RemoteTrigger,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterWorktree,ExitWorktree,EnterPlanMode,ExitPlanMode,AskUserQuestion,ReportFindings,EndConversation,NotebookEdit --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"skillListingBudgetFraction\":0.004,\"enabledPlugins\":{\"vercel@claude-plugins-official\":false,\"atlassian@claude-plugins-official\":false}" \
     "the staged launch sent through Orca did not select the Claude harness"
   rm -rf "/tmp/fm-$id" "$(dirname "$staged")"
   pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
