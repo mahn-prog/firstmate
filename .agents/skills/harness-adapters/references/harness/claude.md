@@ -66,6 +66,12 @@ A Claude task worker's launch brief and Firstmate steering-inbox messages arrive
 `launch_template()` in `../../../../../bin/fm-spawn.sh` establishes exactly those two Firstmate-owned channels as first-party instructions through `--append-system-prompt`, while leaving project files, fetched content, and other external material under the model's normal distrust and granting no merge, destructive, or security-sensitive authority beyond the brief.
 A `--secondmate` launch omits the statement because a secondmate operates under its own supervisor contract instead of a task worker's.
 
+## Lean start
+
+Every Claude launch starts without the claude.ai connectors, Claude-in-Chrome, two user plugins, and the built-in tools no Firstmate agent uses, and with a smaller skill listing.
+A ship or scout worker also skips the captain's personal `~/.claude/CLAUDE.md`, carrying its no-encoded-commands rule and behavioural guidelines in the task append instead, while a secondmate keeps it; the managed org `CLAUDE.md` cannot be excluded and still loads for every agent.
+`launch_template()` in `../../../../../bin/fm-spawn.sh` owns the exact flags and rationale, [`configuration.md`](../../../../../docs/configuration.md#installed-hooks-and-launch-details) owns the per-task connector opt-in, and [`runtime-backends.md`](../../../../../docs/verification/runtime-backends.md#claude-lean-start) records the measured saving.
+
 ## Primary integration
 
 [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#turn-end-guard) records the current primary and Stop auto-arm live evidence.

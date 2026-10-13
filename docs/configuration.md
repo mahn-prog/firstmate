@@ -815,6 +815,10 @@ Those inherited values are defaults and rules only; `fm-spawn` still permits a c
 
 ### Installed hooks and launch details
 
+Every Claude launch turns the claude.ai connectors (Datadog, Vercel, Slack, Gmail and the rest) off, because their tool names load into every request.
+A task that needs them is spawned with `fm-spawn.sh --claude-connectors`, whose [help](../bin/fm-spawn.sh) owns how the choice is recorded and kept.
+The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md#lean-start) describes the rest of the lean Claude launch.
+
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Kimi crews, `fm-spawn.sh` runs `fm-kimi-turnend-hook.sh install`, drops a per-task `.fm-kimi-turnend` pointer in the worktree, and records the matching private registry token for teardown.
 

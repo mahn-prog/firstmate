@@ -586,6 +586,40 @@ The lab home was deleted and the test entry was removed from the store and verif
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude lean start
+
+Verified 2026-10-13 on Claude Code 2.1.296 under a claude.ai Max subscription login (`claude auth status`: `"authMethod": "claude.ai"`, `"subscriptionType": "max"`, with no `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment).
+Both arms ran in print mode in the same scratch copy of a firstmate worktree (its `AGENTS.md`, `CLAUDE.md`, `.agents/skills` and `.claude/skills`, no project hooks), with the flags `launch_template()` in `bin/fm-spawn.sh` emits for a ship or scout worker before and after the lean launch.
+`$APPEND` was that template's exact task statement, and `$APPEND_RULES` the same statement followed by the two carried rules; `jq` printed the result.
+
+```sh
+CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions \
+  --settings '{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}' \
+  --append-system-prompt "$APPEND" -p 'Reply with the single word OK.' --output-format json \
+  | jq -c '{result,num_turns,usage:(.usage|{input_tokens,cache_creation_input_tokens,cache_read_input_tokens})}'
+ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --no-chrome \
+  --disallowedTools Artifact,ArtifactComments,ArtifactData,Workflow,DesignSync,PushNotification,RemoteTrigger,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterWorktree,ExitWorktree,EnterPlanMode,ExitPlanMode,AskUserQuestion,ReportFindings,EndConversation,NotebookEdit \
+  --settings "{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"skillListingBudgetFraction\":0.004,\"enabledPlugins\":{\"vercel@claude-plugins-official\":false,\"atlassian@claude-plugins-official\":false},\"claudeMdExcludes\":[\"$HOME/.claude/CLAUDE.md\"]}" \
+  --append-system-prompt "$APPEND_RULES" -p 'Reply with the single word OK.' --output-format json \
+  | jq -c '{result,num_turns,usage:(.usage|{input_tokens,cache_creation_input_tokens,cache_read_input_tokens})}'
+```
+
+```
+{"result":"OK","num_turns":1,"usage":{"input_tokens":2,"cache_creation_input_tokens":63268,"cache_read_input_tokens":10478}}
+{"result":"OK","num_turns":1,"usage":{"input_tokens":2,"cache_creation_input_tokens":34934,"cache_read_input_tokens":5983}}
+```
+
+The first-request total fell from 73,748 to 40,919 tokens.
+The same lean flags with `-p '/context'` listed exactly three memory files, so the managed org file still loads while the personal file does not, and no MCP tools:
+
+```
+| Managed | /Library/Application Support/ClaudeCode/CLAUDE.md | 8.8k |
+| Project | <scratch>/CLAUDE.md | 4 |
+| Project | <scratch>/AGENTS.md | 15.9k |
+```
+
+`tests/fm-spawn-claude-lean-launch.test.sh` executes the launch the spawn actually emits for ship, scout, secondmate, the `--claude-connectors` opt-in, and relaunch, under both launch-environment postures, with a probe in place of `claude`; it pins the flags, not the saving, so re-run the two arms above after a Claude Code upgrade.
+
 ## Launch-prompt backstop signatures
 
 `bin/fm-busy-lib.sh`'s launch-prompt backstop (`fm_busy_launch_prompt_parked`) reclassifies a launch whose busy record is still pinned at the fm-spawn seed as `unknown launch-prompt`, rather than `busy fm-spawn`, when the captured pane matches that harness's own recognized trust, sign-in, or first-run dialog.
