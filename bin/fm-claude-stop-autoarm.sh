@@ -334,7 +334,9 @@ run_arm() {  # <output file, or empty for none>
 # must outlive this hook's exit, so it is detached three ways: nohup, stdio
 # away from the hook's pipes, and its own process group. Its one status line
 # is awaited within the arm's own confirmation budget plus slack. Sets
-# SUCCESSOR_FAILURE to the banner line for an unconfirmed successor.
+# SUCCESSOR_FAILURE to the banner line for an unconfirmed successor; one that
+# is still alive and silent at that budget is reported as still starting,
+# because the arm itself keeps waiting for a live child.
 SUCCESSOR_FAILURE=
 start_handling_successor() {  # <closed-arm-pid>
   local out pid deadline budget line monitor_was_on=0
@@ -362,6 +364,13 @@ start_handling_successor() {  # <closed-arm-pid>
   done
   line=$(grep '^watcher: FAILED' "$out" 2>/dev/null | head -n 1 || true)
   rm -f "$out" 2>/dev/null || true
+  if [ -z "$line" ] && kill -0 "$pid" 2>/dev/null; then
+    # A slow start is not a failed one: the arm keeps waiting for its live
+    # child up to the grace (bin/fm-watch-arm.sh header) and confirms or
+    # reports on its own, so the banner says what is true now.
+    SUCCESSOR_FAILURE="The handling successor pid=$pid is still starting after ${budget}s and will confirm or report on its own; until it beats, this handling turn runs uncovered."
+    return 1
+  fi
   [ -z "$line" ] || line=" ($line)"
   SUCCESSOR_FAILURE="The handling successor pid=$pid did not confirm a live watcher$line; this handling turn runs uncovered until the next turn end re-arms."
   return 1

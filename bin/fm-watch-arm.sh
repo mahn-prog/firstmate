@@ -35,10 +35,15 @@
 # It NEVER reports started/attached/healthy off a stale beacon or a dead/reused pid: a
 # stale-beacon or dead-pid holder either self-heals (the fresh child steals the
 # dead lock per the singleton self-eviction/steal path and is confirmed) or this
-# returns the FAILED line. A forked child that is alive but has not beaten yet
-# is a slow start, not a failure: it is confirmed whenever its beat lands within
-# the larger of FM_ARM_CONFIRM_TIMEOUT and FM_GUARD_GRACE, and only a child
-# still unconfirmed at that bound is stopped and ledgered confirmation-timeout. On started it waits the child and propagates the wake
+# returns the FAILED line. A forked child that is alive but has not beaten
+# yet is a slow start, not a failure: its start is a long run of short-lived
+# processes whose wall-clock cost grows with host load, so it is confirmed
+# whenever its beat lands within the larger of FM_ARM_CONFIRM_TIMEOUT and
+# FM_GUARD_GRACE (the grace a running watcher gets before its beacon is
+# stale), and only a child still unconfirmed at that bound is stopped and
+# ledgered confirmation-timeout. Stopping a slow live start at the
+# confirmation budget alone left a dead-pid lock for the next attempt to
+# steal and kept a loaded home unmonitored for as long as the load lasted. On started it waits the child and propagates the wake
 # reason; on attached it stays live across identity-matched successors. A cycle
 # that ends with no reason line and no healthy successor is resolved against the
 # watcher's identity-bound delivery record: a matching record reports that wake
@@ -105,18 +110,16 @@ case "${OSTYPE:-}" in
   *) ARM_CONFIRM_DEFAULT=10 ;;
 esac
 CONFIRM_TIMEOUT=${FM_ARM_CONFIRM_TIMEOUT:-$ARM_CONFIRM_DEFAULT}
-# How long a forked child that is still alive may take to reach that beat.
-# The child's start is a long run of short-lived processes whose wall-clock
-# cost grows with host load (measured past 60s at load 24-27 on 10 cores), so
-# a live child is judged by the same grace a running watcher gets before its
-# beacon counts as stale, never by the confirmation budget alone: stopping a
-# slow live start at that budget left a dead-pid lock for the next attempt to
-# steal and kept the home unmonitored for as long as the load lasted. The
-# confirmation budget still bounds a start when it exceeds the grace.
-case "$GRACE" in ''|*[!0-9]*) GRACE=300 ;; esac
-case "$CONFIRM_TIMEOUT" in ''|*[!0-9]*) CONFIRM_TIMEOUT=$ARM_CONFIRM_DEFAULT ;; esac
+# How long a forked child that is still alive may take to reach that beat:
+# the larger of the confirmation budget and the grace (header). A child's
+# start is a long run of short-lived processes whose wall-clock cost grows
+# with host load, so a live child is judged by the grace a running watcher
+# gets, never by the confirmation budget alone.
 STARTUP_BOUND=$CONFIRM_TIMEOUT
-[ "$GRACE" -le "$STARTUP_BOUND" ] || STARTUP_BOUND=$GRACE
+case "$GRACE" in
+  ''|*[!0-9]*) ;;
+  *) [ "$GRACE" -le "$STARTUP_BOUND" ] || STARTUP_BOUND=$GRACE ;;
+esac
 # Poll interval while attached to an existing healthy watcher.
 ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
 CYCLE_LOG="$STATE/.watch-cycle-exits.log"
@@ -530,10 +533,11 @@ handle_arm_signal() {
     # publishing the home-bound lock identity. Do not TERM it in the middle of
     # stale-lock acquisition: that can abandon the steal mutex. Let startup
     # reach that cleanup-ready point (or exit naturally) before forwarding TERM,
-    # but never past the startup confirmation deadline.
+    # but never past the confirmation deadline: an interrupting signal is a
+    # stop request, so it does not inherit the slow-start allowance.
     while fm_pid_alive "$child"; do
       if fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$child" "$FM_HOME" \
-        || [ "$(date +%s)" -ge "$deadline" ]; then
+        || [ "$(date +%s)" -ge "$confirm_deadline" ]; then
         kill -TERM "$child" 2>/dev/null || true
         break
       fi
@@ -559,7 +563,7 @@ child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
 # deadline bounds how long an interrupting signal lets the child reach its
 # cleanup-ready point (handle_arm_signal); the startup deadline is the point
 # past which a child that has still not beaten is stopped and reported.
-deadline=$(( $(date +%s) + CONFIRM_TIMEOUT + 1 ))
+confirm_deadline=$(( $(date +%s) + CONFIRM_TIMEOUT + 1 ))
 startup_deadline=$(( $(date +%s) + STARTUP_BOUND + 1 ))
 if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
   FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" &

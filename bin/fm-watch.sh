@@ -2552,18 +2552,23 @@ printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/
 # lock. Everything from here to the poll loop's own touch (the recovery-marker
 # transactions below, retirement recovery, the loop's first checks) is a run
 # of short-lived processes whose wall-clock cost grows with host load, and
-# bin/fm-watch-arm.sh confirms a start only off this beacon: on the loaded
-# hosts of 2026-10-15/16 that work alone outran a 60s confirmation budget.
+# bin/fm-watch-arm.sh confirms a start only off this beacon, so that work must
+# not stand between the lock and the beat.
 touch "$STATE/.last-watcher-beat"
 
+# A recovery-marker failure keeps the lock and the marker exactly as found,
+# as it did before the EXIT trap preceded it: cleanup would rewrite the very
+# marker that was just judged unsafe to touch.
 if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ]; then
   if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
     echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
+    trap - EXIT
     exit 1
   fi
 fi
 if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
   echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
+  trap - EXIT
   exit 1
 fi
 if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then

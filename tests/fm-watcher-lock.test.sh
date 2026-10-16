@@ -1545,12 +1545,11 @@ test_msys_pid_identity_uses_proc() {
 
 # A re-arm's start-to-first-beat path is a long run of short-lived processes
 # (library sourcing, the singleton lock, the recovery-marker transactions), so
-# its wall-clock cost scales with host load: measured 2-5s on a quiet host,
-# 13-31s at load 7, and past a 60s confirmation budget at load 24-27 in the
-# 2026-10-15/16 secondmate homes, where every TERMed child left a dead-pid lock
-# for the next attempt to steal. The arm therefore judges a live, still-starting
-# child by the same grace a running watcher gets before its beacon counts as
-# stale, and still stops a child that never beats within that grace.
+# its wall-clock cost scales with host load, and a child stopped at a fixed
+# confirmation budget leaves a dead-pid lock for the next attempt to steal.
+# The arm therefore judges a live, still-starting child by the same grace a
+# running watcher gets before its beacon counts as stale, and still stops a
+# child that never beats within that grace.
 REAL_MKDIR=$(command -v mkdir)
 REAL_MKTEMP=$(command -v mktemp)
 
@@ -1573,15 +1572,15 @@ test_arm_waits_for_a_slow_live_start_within_grace() {
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
   # Two delayed mkdir calls precede the lock, so the child cannot take it inside
-  # the 2s confirmation budget. The 30s grace is a ceiling, not a wait: the arm
-  # returns as soon as the child beats.
+  # the 2s confirmation budget. The 120s grace is a ceiling with headroom over a
+  # loaded start, not a wait: the arm returns as soon as the child beats.
   slow_state_mkdir_shim "$fakebin" "$state" 2.5
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=30 \
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=120 \
     FM_ARM_CONFIRM_TIMEOUT=2 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
     FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
   armpid=$!
   i=0
-  while [ "$i" -lt 300 ]; do
+  while [ "$i" -lt 1200 ]; do
     grep -q '^watcher: started pid=' "$armout" 2>/dev/null && break
     is_live_non_zombie "$armpid" || break
     sleep 0.1
