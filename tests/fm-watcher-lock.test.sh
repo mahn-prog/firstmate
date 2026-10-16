@@ -1543,6 +1543,183 @@ test_msys_pid_identity_uses_proc() {
   pass "MSYS process identity uses compatible /proc fields"
 }
 
+# A re-arm's start-to-first-beat path is a long run of short-lived processes
+# (library sourcing, the singleton lock, the recovery-marker transactions), so
+# its wall-clock cost scales with host load, and a child stopped at a fixed
+# confirmation budget leaves a dead-pid lock for the next attempt to steal.
+# The arm therefore judges a live, still-starting child by the same grace a
+# running watcher gets before its beacon counts as stale, and still stops a
+# child that never beats within that grace.
+REAL_MKDIR=$(command -v mkdir)
+REAL_MKTEMP=$(command -v mktemp)
+
+# A mkdir shim that delays only the state-directory `mkdir -p` the watcher and
+# its wake library each run before the singleton lock, so the child's start is
+# slow at a point where nothing yet proves it is this home's watcher.
+slow_state_mkdir_shim() {  # <fakebin> <state> <seconds>
+  cat > "$1/mkdir" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = -p ] && [ "\$2" = "$2" ]; then sleep $3; fi
+exec "$REAL_MKDIR" "\$@"
+SH
+  chmod +x "$1/mkdir"
+}
+
+test_arm_waits_for_a_slow_live_start_within_grace() {
+  local dir state fakebin armout armpid i lock_pid
+  dir=$(make_case arm-slow-live-start)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  # Two delayed mkdir calls precede the lock, so the child cannot take it inside
+  # the 2s confirmation budget. The 120s grace is a ceiling with headroom over a
+  # loaded start, not a wait: the arm returns as soon as the child beats.
+  slow_state_mkdir_shim "$fakebin" "$state" 2.5
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=120 \
+    FM_ARM_CONFIRM_TIMEOUT=2 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 1200 ]; do
+    grep -q '^watcher: started pid=' "$armout" 2>/dev/null && break
+    is_live_non_zombie "$armpid" || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF 'watcher: started pid=' "$armout" \
+    || fail "arm did not confirm a slow but live start: $(cat "$armout")"
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  grep -F "watcher: started pid=$lock_pid (beacon fresh)" "$armout" >/dev/null \
+    || fail "arm started line did not name the confirmed live watcher (lock '$lock_pid'): $(cat "$armout")"
+  is_live_non_zombie "$lock_pid" || fail "arm confirmed a watcher that is not alive"
+  ! grep -q 'reason=confirmation-timeout' "$state/.watch-cycle-exits.log" 2>/dev/null \
+    || fail "a slow but live start was ledgered as a confirmation timeout"
+  kill -TERM "$armpid" 2>/dev/null || true
+  wait_for_exit "$armpid" 100 >/dev/null 2>&1 || true
+  i=0
+  while [ "$i" -lt 50 ] && is_live_non_zombie "$lock_pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! is_live_non_zombie "$lock_pid" || fail "stopping the arm left its watcher running"
+  pass "arm confirms a slow but live start past the confirmation budget but within grace"
+}
+
+test_arm_grace_stops_a_start_that_never_beats() {
+  local dir state fakebin armout armpid status lock_pid
+  dir=$(make_case arm-slow-start-grace-bound)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  # The child cannot reach its lock inside a 3s grace: the arm must stop it and
+  # report, never leave it running unconfirmed.
+  slow_state_mkdir_shim "$fakebin" "$state" 12
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=3 \
+    FM_ARM_CONFIRM_TIMEOUT=2 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  wait_for_exit "$armpid" 150
+  status=$?
+  [ "$status" -ne 124 ] || fail "arm outlived the startup grace for a child that never beat: $(cat "$armout")"
+  [ "$status" -ne 0 ] || fail "arm reported success for a child that never beat: $(cat "$armout")"
+  grep -F 'watcher: FAILED - no live watcher with a fresh beacon' "$armout" >/dev/null \
+    || fail "arm did not report the typed failure for a child that never beat: $(cat "$armout")"
+  ! grep -q '^watcher: started' "$armout" || fail "arm falsely reported a started watcher"
+  grep -q 'reason=confirmation-timeout' "$state/.watch-cycle-exits.log" 2>/dev/null \
+    || fail "the stopped start was not ledgered as a confirmation timeout"
+  lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  [ -z "$lock_pid" ] || ! is_live_non_zombie "$lock_pid" || fail "a watcher was left running after the arm gave up"
+  pass "arm stops and reports a start that never beats within grace"
+}
+
+test_watcher_beats_before_recovery_marker_work() {
+  local dir state fakebin out release pid i token
+  dir=$(make_case watcher-beat-before-marker)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  release="$dir/release"
+  # An announced-but-unacked episode makes a fresh watcher rewrite the recovery
+  # marker at startup; the shim holds that rewrite until released, so the lock
+  # identity and beacon must already be published while it is held.
+  printf 'announced:downtime:seed.1.abc\n' > "$state/.watcher-down"
+  chmod 0600 "$state/.watcher-down"
+  cat > "$fakebin/mktemp" <<SH
+#!/usr/bin/env bash
+case "\${!#}" in
+  *.watcher-down.tmp.*) while [ ! -e "$release" ]; do sleep 0.05; done ;;
+esac
+exec "$REAL_MKTEMP" "\$@"
+SH
+  chmod +x "$fakebin/mktemp"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$pid" ] \
+      && [ -s "$state/.watch.lock/pid-identity" ] \
+      && [ -e "$state/.last-watcher-beat" ] && break
+    is_live_non_zombie "$pid" || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" != "$pid" ] \
+    || [ ! -s "$state/.watch.lock/pid-identity" ] || [ ! -e "$state/.last-watcher-beat" ]; then
+    : > "$release"
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "watcher did not publish its lock identity and first beacon before its recovery-marker work: $(cat "$out")"
+  fi
+  : > "$release"
+  i=0
+  token=
+  while [ "$i" -lt 200 ]; do
+    token=$(cat "$state/.watcher-down" 2>/dev/null || true)
+    case "$token" in pending:downtime:*) break ;; esac
+    sleep 0.1
+    i=$((i + 1))
+  done
+  case "$token" in
+    pending:downtime:*) ;;
+    *)
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      fail "the reopened recovery marker was not written after the beacon: '$token'"
+      ;;
+  esac
+  is_live_non_zombie "$pid" || fail "watcher exited after its recovery-marker work: $(cat "$out")"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  pass "watcher publishes its lock identity and first beacon before recovery-marker work"
+}
+
+test_lock_reclaims_dangling_steal_link() {
+  local dir state lockdir dead rc newpid
+  dir=$(make_case lock-dangling-steal-link)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  # A reaper that died between retiring the steal owner and unlinking the mutex
+  # leaves the mutex pointing at a directory that no longer exists. Nothing can
+  # own that link, so an acquirer must reclaim it instead of reporting the dead
+  # lock holder as live.
+  ln -s "$lockdir.steal.owner.gone" "$lockdir.steal"
+  rc=0
+  newpid=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 8
+    cat "$2/pid"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "acquirer could not reclaim a dead-pid lock behind a dangling steal mutex (rc=$rc)"
+  [ -n "$newpid" ] && [ "$newpid" != "$dead" ] || fail "dead-pid lock was not replaced (still '$newpid')"
+  [ ! -e "$lockdir.steal" ] && [ ! -L "$lockdir.steal" ] \
+    || fail "dangling steal mutex remained after reclaim"
+  pass "a dead-pid lock behind a dangling steal mutex is reclaimed"
+}
+
 test_wait_deadline_reaps_a_stopped_child
 test_singleton_start
 test_pid_identity_is_locale_invariant
@@ -1551,6 +1728,7 @@ test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
 test_msys_pid_identity_uses_proc
 test_stale_watch_lock_reclaimed
 test_stale_watch_reclaim_publishes_before_clear
+test_watcher_beats_before_recovery_marker_work
 test_live_stale_watch_lock_is_actionable
 test_live_stalled_watch_lock_is_replaced_past_hard_bound
 test_guard_warnings
@@ -1559,6 +1737,7 @@ test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_reclaims_dead_steal_owner_without_nested_markers
 test_lock_recovers_dead_nested_steal_chain
+test_lock_reclaims_dangling_steal_link
 test_lock_steal_reap_cannot_remove_successor
 test_lock_reclaims_self_held_steal_mutex
 test_lock_resumes_own_interrupted_steal_reap
@@ -1577,6 +1756,8 @@ test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
 test_arm_term_during_steal_waits_for_watcher_cleanup_trap
 test_arm_term_bounds_wait_for_stalled_startup
+test_arm_waits_for_a_slow_live_start_within_grace
+test_arm_grace_stops_a_start_that_never_beats
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
 test_arm_fails_loud_when_no_fresh_watcher_confirmable

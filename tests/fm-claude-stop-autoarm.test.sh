@@ -88,8 +88,9 @@ write_arm_fixture() {
   # Every fixture records the hook's foreground arms in state/arm-ran. A handling
   # successor (FM_WATCH_PREDECESSOR_ARM_PID set) is recorded apart in
   # state/successor-ran so attempt counts stay about the foreground; it confirms
-  # a started watcher and exits, parks while state/successor-park exists, or
-  # fails while state/successor-fail exists.
+  # a started watcher and exits, stays silent while state/successor-slow exists,
+  # parks while state/successor-park exists, or fails while state/successor-fail
+  # exists.
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
@@ -98,6 +99,7 @@ if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
     printf 'watcher: FAILED - no live watcher with a fresh beacon\n'
     exit 1
   fi
+  while [ -e "$FM_HOME/state/successor-slow" ]; do sleep 0.05; done
   printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
   while [ -e "$FM_HOME/state/successor-park" ]; do sleep 0.05; done
   exit 0
@@ -546,6 +548,31 @@ test_unconfirmed_handling_successor_still_rewakes() {
   assert_contains "$out" "watcher: FAILED - no live watcher with a fresh beacon" "the rewake must carry the successor's own failure line"
   [ "$(wc -l < "$dir/state/successor-ran" | tr -d ' ')" -eq 1 ] || fail "the failed successor must not be retried inside the rewake path"
   pass "auto-arm: an unconfirmed handling successor is reported in the rewake instead of blocking it"
+}
+
+test_slow_handling_successor_is_reported_as_still_starting() {
+  local dir out status successor i
+  dir=$(make_primary_dir "$TMP_ROOT/successor-slow")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" attached-delivered
+  : > "$dir/state/successor-slow"
+  export FM_ARM_CONFIRM_TIMEOUT=1
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  unset FM_ARM_CONFIRM_TIMEOUT
+  expect_code 2 "$status" "a slow handling successor must never withhold the delivered wake"
+  assert_contains "$out" "signal: task.status done: fixture peer cycle ended" "rewake must still carry the delivered reason"
+  assert_contains "$out" "is still starting" "the rewake must say the successor is still starting"
+  assert_not_contains "$out" "did not confirm a live watcher" "a live, silent successor is not a failed one"
+  successor=$(sed -n 's/^arm=\([0-9]*\) .*$/\1/p' "$dir/state/successor-ran")
+  kill -0 "$successor" 2>/dev/null || fail "the slow successor was not left running to confirm on its own"
+  rm -f "$dir/state/successor-slow"
+  i=0
+  while kill -0 "$successor" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  ! kill -0 "$successor" 2>/dev/null || fail "the released successor did not finish"
+  pass "auto-arm: a handling successor still starting at the budget is reported as starting, not failed"
 }
 
 test_failed_close_rewakes_with_failure_banner() {
@@ -1563,6 +1590,7 @@ test_actionable_close_rewakes_with_reason
 test_actionable_close_with_live_successor_rewakes_once
 test_attached_cycle_end_starts_handling_successor
 test_unconfirmed_handling_successor_still_rewakes
+test_slow_handling_successor_is_reported_as_still_starting
 test_failed_close_rewakes_with_failure_banner
 test_failed_cycles_notify_once_and_keep_retrying
 test_failure_notice_marker_write_refuses_delivery_and_retries

@@ -917,6 +917,11 @@ fm_recovery_marker_reopen_announced() {
 # successor's link. A reaper that died after winning leaves its tombstone; a
 # later reaper re-elects itself by renaming that dead reaper's tombstone, and a
 # reaper whose own election a trap interrupted resumes it from its tombstone.
+# A link whose owner directory and tombstones are all gone (a claim that died
+# between discarding its owner and unlinking, or an unlink that failed) can be
+# owned by nobody; recreating the owner directory, which only this lock's own
+# owner pattern may name, is that link's election, and the winner releases it
+# like any hold of its own.
 fm_lock_reap_dead_link() {
   local lockdir=$1 owner pid token tomb current
   [ -L "$lockdir" ] || return 1
@@ -935,7 +940,18 @@ fm_lock_reap_dead_link() {
       fi
       token=$tomb
     done
-    [ -n "$token" ] || return 1
+    if [ -z "$token" ]; then
+      case "$owner" in
+        "$(fm_lock_abs_path "$lockdir")".owner.*) ;;
+        *) return 1 ;;
+      esac
+      mkdir "$owner" 2>/dev/null || return 1
+      if ! fm_lock_prepare_owner "$owner" || ! fm_lock_points_to_owner "$lockdir" "$owner"; then
+        fm_lock_discard_owner "$owner"
+        return 1
+      fi
+      token=$owner
+    fi
   fi
   tomb="$owner.reaped.$current"
   if [ "$token" != "$tomb" ]; then
