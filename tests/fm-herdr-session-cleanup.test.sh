@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Focused safety tests for bin/fm-herdr-session-cleanup.sh.
 # Covers one exact cleanup, every title/journal/topology/agent/process refusal,
-# locked revalidation races, focus refusal, read errors, and repeat idempotence.
+# locked revalidation races, focus refusal, read errors, repeat idempotence, and
+# one journal scan per run across many workspaces.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -110,8 +111,12 @@ fixture_workspaces() {
   printf ']'
 }
 
+extra_token() { # <n>
+  printf 'Tok%019d' "$1"
+}
+
 extra_title() { # <n>
-  printf '└ extra-%s · p:%s' "$1" "$(printf 'Tok%019d' "$1")"
+  printf '└ extra-%s · p:%s' "$1" "$(extra_token "$1")"
 }
 
 fixture_tabs() {
@@ -311,7 +316,7 @@ reset_fixture
 printf '24\n' > "$FIXTURE_DIR/extra-workspaces"
 : > "$JOURNAL_READS"
 for n in $(seq 1 12) $(seq 25 36); do
-  write_v1 "extra-$n" "$(printf 'Tok%019d' "$n")"
+  write_v1 "extra-$n" "$(extra_token "$n")"
   [ "$n" -gt 12 ] || : > "$FM_STATE_OVERRIDE/extra-$n.meta"
 done
 fm_herdr_session_cleanup >/dev/null 2>&1
@@ -320,18 +325,22 @@ fm_herdr_session_cleanup >/dev/null 2>&1
 for n in $(seq 1 12) $(seq 25 36); do
   [ -f "$FM_STATE_OVERRIDE/extra-$n.herdr-presentation" ] || fail "many-workspace cleanup retired kept journal extra-$n"
 done
-# 25 journals and 25 projection-titled workspaces: one discovery scan, at most
-# one confirming read per workspace, and the two full locked rechecks (before
-# and after the close) for the single closed target, each a scan plus one read.
-# Rescanning per workspace would read journals 25 x 25 times.
-journals=25 workspaces=25
+# One discovery scan, at most one confirming read per projection-titled
+# workspace, and two reads for each of the two locked rechecks (before and
+# after the close) of the single closed target, which reread only journals
+# that could carry its title. Rescanning per workspace would read journals
+# workspaces x journals times.
+journals=$(find "$FM_STATE_OVERRIDE" -name '*.herdr-presentation' | wc -l | tr -d ' ')
+journals=$((journals + 1))
+workspaces=$(($(cat "$FIXTURE_DIR/extra-workspaces") + 1))
 reads=$(wc -l < "$JOURNAL_READS" | tr -d ' ')
-[ "$reads" -le $((journals + workspaces + 2 * (journals + 1))) ] \
+[ "$reads" -le $((journals + workspaces + 4)) ] \
   || fail "many-workspace cleanup read journals $reads times; expected one scan plus per-workspace lookups"
 pass "many workspaces against many journals read each journal once and keep the same close/keep decisions"
 unset -f fm_backend_herdr_projection_journal_snapshot
 eval "$(declare -f fm_test_real_journal_snapshot \
   | sed '1s/^fm_test_real_journal_snapshot /fm_backend_herdr_projection_journal_snapshot /')"
+unset -f fm_test_real_journal_snapshot
 
 INTEGRATION_ROOT="$TMP_ROOT/bootstrap-integration"
 mkdir -p "$INTEGRATION_ROOT/home/state" "$INTEGRATION_ROOT/home/data" "$INTEGRATION_ROOT/home/config"
