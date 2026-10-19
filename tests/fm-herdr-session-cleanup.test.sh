@@ -98,7 +98,20 @@ fixture_workspaces() {
   if [ -e "$FIXTURE_DIR/duplicate-token" ]; then
     printf ',{"workspace_id":"w3","label":"└ copy · p:%s","focused":false,"active_tab_id":"w3:t1","tab_count":1,"pane_count":1}' "$TOKEN"
   fi
+  if [ -e "$FIXTURE_DIR/extra-workspaces" ]; then
+    local i
+    i=1
+    while [ "$i" -le "$(cat "$FIXTURE_DIR/extra-workspaces")" ]; do
+      printf ',{"workspace_id":"x%s","label":"%s","focused":false,"active_tab_id":"x%s:t1","tab_count":1,"pane_count":1}' \
+        "$i" "$(extra_title "$i")" "$i"
+      i=$((i + 1))
+    done
+  fi
   printf ']'
+}
+
+extra_title() { # <n>
+  printf '└ extra-%s · p:%s' "$1" "$(printf 'Tok%019d' "$1")"
 }
 
 fixture_tabs() {
@@ -281,6 +294,44 @@ reset_fixture; : > "$FIXTURE_DIR/error-workspace-get"; assert_preserved "unreada
 reset_fixture; : > "$FIXTURE_DIR/race"; assert_preserved "revalidation race"
 reset_fixture; printf '%s\n' "$TAB" > "$FIXTURE_DIR/active-tab"; assert_preserved "active target"
 reset_fixture; : > "$FIXTURE_DIR/focus-refuse"; assert_preserved "focus refusal"
+
+# Many workspaces against many journals: every journal is read once for
+# discovery, not once per workspace, and the close/keep decisions are the same
+# as for the single-workspace case. Extras 1-12 are live tasks (journal plus
+# metadata), 13-24 are workspaces with no journal, and journals 25-36 have no
+# workspace; only the exact stale target closes.
+eval "$(declare -f fm_backend_herdr_projection_journal_snapshot \
+  | sed '1s/^fm_backend_herdr_projection_journal_snapshot /fm_test_real_journal_snapshot /')"
+JOURNAL_READS="$TMP_ROOT/journal-reads.log"
+fm_backend_herdr_projection_journal_snapshot() {
+  printf '%s\n' "$1" >> "$JOURNAL_READS"
+  fm_test_real_journal_snapshot "$@"
+}
+reset_fixture
+printf '24\n' > "$FIXTURE_DIR/extra-workspaces"
+: > "$JOURNAL_READS"
+for n in $(seq 1 12) $(seq 25 36); do
+  write_v1 "extra-$n" "$(printf 'Tok%019d' "$n")"
+  [ "$n" -gt 12 ] || : > "$FM_STATE_OVERRIDE/extra-$n.meta"
+done
+fm_herdr_session_cleanup >/dev/null 2>&1
+[ ! -e "$FM_STATE_OVERRIDE/$ID.herdr-presentation" ] || fail "many-workspace cleanup kept the stale target journal"
+[ "$(cat "$CLOSE_LOG")" = "test $PANE no-agent" ] || fail "many-workspace cleanup closed something other than the one stale target: $(cat "$CLOSE_LOG")"
+for n in $(seq 1 12) $(seq 25 36); do
+  [ -f "$FM_STATE_OVERRIDE/extra-$n.herdr-presentation" ] || fail "many-workspace cleanup retired kept journal extra-$n"
+done
+# 25 journals and 25 projection-titled workspaces: one discovery scan, at most
+# one confirming read per workspace, and the two full locked rechecks (before
+# and after the close) for the single closed target, each a scan plus one read.
+# Rescanning per workspace would read journals 25 x 25 times.
+journals=25 workspaces=25
+reads=$(wc -l < "$JOURNAL_READS" | tr -d ' ')
+[ "$reads" -le $((journals + workspaces + 2 * (journals + 1))) ] \
+  || fail "many-workspace cleanup read journals $reads times; expected one scan plus per-workspace lookups"
+pass "many workspaces against many journals read each journal once and keep the same close/keep decisions"
+unset -f fm_backend_herdr_projection_journal_snapshot
+eval "$(declare -f fm_test_real_journal_snapshot \
+  | sed '1s/^fm_test_real_journal_snapshot /fm_backend_herdr_projection_journal_snapshot /')"
 
 INTEGRATION_ROOT="$TMP_ROOT/bootstrap-integration"
 mkdir -p "$INTEGRATION_ROOT/home/state" "$INTEGRATION_ROOT/home/data" "$INTEGRATION_ROOT/home/config"
