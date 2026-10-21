@@ -68,9 +68,10 @@ A `--secondmate` launch omits the statement because a secondmate operates under 
 
 ## Lean start
 
-Every Claude launch starts without the claude.ai connectors, Claude-in-Chrome, two user plugins, and the built-in tools no Firstmate agent uses, and with a smaller skill listing.
+Every Claude launch starts without the claude.ai connectors, Claude-in-Chrome, two user plugins, and the built-in tools no Firstmate agent uses, with a smaller skill listing, and with its auto-compact window capped for that launch, overriding a larger saved user window without changing it.
 A ship or scout worker also skips the captain's personal `~/.claude/CLAUDE.md`, carrying its no-encoded-commands rule and behavioural guidelines in the task append instead, while a secondmate keeps it; the managed org `CLAUDE.md` cannot be excluded and still loads for every agent.
-`launch_template()` in `../../../../../bin/fm-spawn.sh` owns the exact flags and rationale, [`configuration.md`](../../../../../docs/configuration.md#installed-hooks-and-launch-details) owns the per-task connector opt-in, and [`runtime-backends.md`](../../../../../docs/verification/runtime-backends.md#claude-lean-start) records the measured saving.
+A ship or scout worker in a firstmate-repo worktree also skips that worktree's `AGENTS.md` and `CLAUDE.md` supervisor contract, which its brief already overrides, and the append carries the two rules from it that bind a worker and live nowhere else it loads; a secondmate, and a worker in any other project, keeps them.
+`launch_template()` in `../../../../../bin/fm-spawn.sh` owns the exact flags and rationale, [`configuration.md`](../../../../../docs/configuration.md#installed-hooks-and-launch-details) owns the per-task connector opt-in, [`runtime-backends.md`](../../../../../docs/verification/runtime-backends.md#claude-lean-start) records the measured saving, and `../../../../../bin/fm-claude-usage.sh` measures tokens per request and per session from the fleet's own transcripts.
 
 ## Primary integration
 
