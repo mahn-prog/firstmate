@@ -618,7 +618,49 @@ The same lean flags with `-p '/context'` listed exactly three memory files, so t
 | Project | <scratch>/AGENTS.md | 15.9k |
 ```
 
-`tests/fm-spawn-claude-lean-launch.test.sh` executes the launch the spawn actually emits for ship, scout, secondmate, the `--claude-connectors` opt-in, and relaunch, under both launch-environment postures, with a probe in place of `claude`; it pins the flags, not the saving, so re-run the two arms above after a Claude Code upgrade.
+`tests/fm-spawn-claude-lean-launch.test.sh` executes the launch the spawn actually emits for ship, scout, secondmate, a firstmate-repo worker, the `--claude-connectors` opt-in, and relaunch, under both launch-environment postures, with a probe in place of `claude`; it pins the flags, not the saving, so re-run the arms above and below after a Claude Code upgrade.
+
+### Working-set cap and firstmate-repo exclusion
+
+Verified 2026-10-21 on Claude Code 2.1.306 under the same login, in the same kind of scratch copy, where `claude --help` lists `--autocompact <auto|tokens>` (100k to 1M).
+The before arm is the second command above.
+`$APPEND_FM` is `$APPEND_RULES` followed by the two firstmate-repo rules, and `$W` is the scratch copy's absolute path; the after arm is the launch `launch_template()` emits for a firstmate-repo ship or scout worker:
+
+```sh
+ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --no-chrome \
+  --disallowedTools Artifact,ArtifactComments,ArtifactData,Workflow,DesignSync,PushNotification,RemoteTrigger,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterWorktree,ExitWorktree,EnterPlanMode,ExitPlanMode,AskUserQuestion,ReportFindings,EndConversation,NotebookEdit \
+  --autocompact 200000 \
+  --settings "{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false},\"skillListingBudgetFraction\":0.004,\"enabledPlugins\":{\"vercel@claude-plugins-official\":false,\"atlassian@claude-plugins-official\":false},\"claudeMdExcludes\":[\"$HOME/.claude/CLAUDE.md\",\"$W/AGENTS.md\",\"$W/CLAUDE.md\"]}" \
+  --append-system-prompt "$APPEND_FM" -p 'Reply with the single word OK.' --output-format json \
+  | jq -c '{result,num_turns,usage:(.usage|{input_tokens,cache_creation_input_tokens,cache_read_input_tokens})}'
+```
+
+```
+before {"result":"OK","num_turns":1,"usage":{"input_tokens":2,"cache_creation_input_tokens":34670,"cache_read_input_tokens":6233}}
+after  {"result":"OK","num_turns":1,"usage":{"input_tokens":2,"cache_creation_input_tokens":18505,"cache_read_input_tokens":6233}}
+```
+
+The first-request total fell from 40,905 to 24,740 tokens.
+The same after arm without `--autocompact` and with only `$W/CLAUDE.md` added to the excludes printed the line below, 40,779 tokens, because Claude Code loads `AGENTS.md` natively, so both files must be excluded:
+
+```
+{"result":"OK","num_turns":1,"usage":{"input_tokens":2,"cache_creation_input_tokens":32314,"cache_read_input_tokens":8463}}
+```
+
+The after arm with `-p '/context'` reported a 200k window (`48k / 200k`) with a 33k auto-compact buffer.
+
+`bin/fm-claude-usage.sh` measures the per-task effect from the fleet's own transcripts, read-only, so compare its summary for sessions started before and after a launch change:
+
+```sh
+bin/fm-claude-usage.sh --since 2026-10-14 --until 2026-10-21 --role worker
+```
+
+On 2026-10-21, before this cap reached any worker, it printed:
+
+```
+role	sessions	requests	request_mean	request_p50	request_p90	first_mean	peak_mean	session_mean	session_p50	session_p90	compacted_sessions	compactions	cost_mean_usd
+worker	101	11452	176.8k	163.8k	313.5k	31.7k	230.2k	21952.9k	15538.6k	47735.2k	14	14	12.71
+```
 
 ## Launch-prompt backstop signatures
 

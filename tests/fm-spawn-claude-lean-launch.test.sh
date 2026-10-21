@@ -2,9 +2,11 @@
 # tests/fm-spawn-claude-lean-launch.test.sh - every Claude agent this fleet
 # launches starts lean: claude.ai connectors off unless the task opted in,
 # Chrome and two user plugins off, a smaller skill listing, the unused built-in
-# tools removed, and - for ship and scout workers only - the captain's personal
-# ~/.claude/CLAUDE.md excluded with its two load-bearing rules carried in the
-# worker system-prompt append.
+# tools removed, a per-launch auto-compact window, and - for ship and scout
+# workers only - the captain's personal ~/.claude/CLAUDE.md excluded with its
+# two load-bearing rules carried in the worker system-prompt append, plus, in a
+# firstmate-repo worktree only, that worktree's AGENTS.md and CLAUDE.md
+# excluded with the two worker-binding rules they alone carried.
 #
 # The assertions never read bin/fm-spawn.sh's source. They drive the real spawn
 # against a fake pane and a real isolated git worktree, then EXECUTE the launch
@@ -26,6 +28,11 @@ CONTRARY=true
 # The 19 built-in tools no Firstmate-launched Claude agent uses, from the
 # lean-worker measurement this launch implements.
 EXPECTED_DISALLOWED='Artifact,ArtifactComments,ArtifactData,Workflow,DesignSync,PushNotification,RemoteTrigger,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterWorktree,ExitWorktree,EnterPlanMode,ExitPlanMode,AskUserQuestion,ReportFindings,EndConversation,NotebookEdit'
+
+# The per-launch auto-compact window, chosen by replaying the fleet's Claude
+# transcripts: it overrides any larger saved user window for every agent
+# this fleet launches.
+EXPECTED_AUTOCOMPACT=200000
 
 # make_case <name> <id>...
 # Echoes "<case-dir>|<home>|<project>|<worktree>|<fakebin>|<launch-log>|<pane-log>".
@@ -103,6 +110,8 @@ probe_has_arg() {  # <probe-output> <arg>
 assert_lean_common() {  # <probe-output> <label>
   local seen=$1 label=$2 settings
   probe_has_arg "$seen" --no-chrome || fail "$label: launch does not pass --no-chrome"$'\n'"$seen"
+  assert_equals "$EXPECTED_AUTOCOMPACT" "$(probe_value_after "$seen" --autocompact)" \
+    "$label: launch must cap the auto-compact window per launch"
   assert_equals "$EXPECTED_DISALLOWED" "$(probe_value_after "$seen" --disallowedTools)" \
     "$label: launch must remove exactly the 19 unused built-in tools"
   settings=$(probe_value_after "$seen" --settings)
@@ -118,8 +127,8 @@ assert_worker_excludes_personal_file() {  # <probe-output> <home> <label>
   local seen=$1 home=$2 label=$3 settings prompt expected
   expected=$(personal_claude_md "$home")
   settings=$(probe_value_after "$seen" --settings)
-  printf '%s' "$settings" | jq -e --arg p "$expected" '.claudeMdExcludes == [$p]' >/dev/null \
-    || fail "$label: settings must exclude only the personal CLAUDE.md at $expected: $settings"
+  printf '%s' "$settings" | jq -e --arg p "$expected" '.claudeMdExcludes[0] == $p' >/dev/null \
+    || fail "$label: settings must exclude the personal CLAUDE.md at $expected: $settings"
   prompt=$(probe_value_after "$seen" --append-system-prompt)
   assert_contains "$prompt" "You are a task worker launched by Firstmate" \
     "$label: the task control-channel statement must stay in the append"
@@ -153,15 +162,82 @@ test_ship_and_scout_launch_lean_in_both_allowlist_postures() {
         "$kind, allowlist $setting: claude.ai connectors must be off, overriding a contrary pane value"
       assert_lean_common "$seen" "$kind, allowlist $setting"
       assert_worker_excludes_personal_file "$seen" "$HOME_DIR" "$kind, allowlist $setting"
+      assert_project_memory_kept "$seen" "$HOME_DIR" "$kind, allowlist $setting"
     done
   done
   pass "ship and scout Claude launches start lean and exclude the personal CLAUDE.md under both allowlist postures"
 }
 
+# A worker in any project other than firstmate keeps that project's own
+# AGENTS.md and CLAUDE.md, and gets none of the firstmate-repo rules.
+assert_project_memory_kept() {  # <probe-output> <home> <label>
+  local seen=$1 home=$2 label=$3 settings prompt
+  settings=$(probe_value_after "$seen" --settings)
+  printf '%s' "$settings" | jq -e --arg p "$(personal_claude_md "$home")" '.claudeMdExcludes == [$p]' >/dev/null \
+    || fail "$label: a non-firstmate worktree must exclude only the personal CLAUDE.md: $settings"
+  prompt=$(probe_value_after "$seen" --append-system-prompt)
+  assert_not_contains "$prompt" "$FM_REPO_ADDRESS_RULE" "$label: a non-firstmate worker must not get the firstmate-repo rules"
+  assert_not_contains "$prompt" "$FM_REPO_WATCHER_RULE" "$label: a non-firstmate worker must not get the firstmate-repo rules"
+}
+
+# make_firstmate_shaped <dir>: give a worktree or home the two files that
+# identify the firstmate repository, plus the memory files a Claude agent
+# would otherwise load there.
+make_firstmate_shaped() {
+  local dir=$1
+  mkdir -p "$dir/bin" "$dir/.agents/skills/firstmate-coding-guidelines"
+  printf '#!/usr/bin/env bash\n' > "$dir/bin/fm-spawn.sh"
+  printf -- '---\nname: firstmate-coding-guidelines\n---\n' > "$dir/.agents/skills/firstmate-coding-guidelines/SKILL.md"
+  printf '# Firstmate\n' > "$dir/AGENTS.md"
+  printf '@AGENTS.md\n' > "$dir/CLAUDE.md"
+}
+
+# Rules from the firstmate supervisor contract that bind a worker and live
+# nowhere else a firstmate-repo worker still loads; the launch append carries
+# them once that contract is excluded.
+FM_REPO_ADDRESS_RULE='Never put "captain" or any other direct address into a non-chat artifact'
+FM_REPO_WATCHER_RULE='Never broadly kill Firstmate processes such as watchers'
+
+test_firstmate_repo_worker_skips_the_supervisor_contract() {
+  local rec out status seen kind id settings prompt personal
+  for kind in ship scout; do
+    id="$kind-fmrepo-a1"
+    rec=$(make_case "$kind-fmrepo" "$id")
+    read_case "$rec"
+    make_firstmate_shaped "$WT_DIR"
+    # A pooled worktree must be clean and the spawn resets it to origin's
+    # default branch, so the identity files are committed and pushed there.
+    git -C "$WT_DIR" add -A && git -C "$WT_DIR" -c user.name=t -c user.email=t@t commit -qm firstmate-shaped \
+      && git -C "$WT_DIR" push -q origin HEAD:main \
+      || fail "$kind: could not commit the firstmate-shaped worktree"
+    if [ "$kind" = ship ]; then
+      out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+    else
+      out=$(run_case_spawn "$id" "$PROJ_DIR" --scout)
+    fi
+    status=$?
+    expect_code 0 "$status" "$kind spawn in a firstmate-repo worktree should succeed: $out"
+    seen=$(emitted_launch_probe "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" unset) \
+      || fail "$kind in a firstmate-repo worktree: the emitted launch failed to run"
+    assert_lean_common "$seen" "$kind in a firstmate-repo worktree"
+    assert_worker_excludes_personal_file "$seen" "$HOME_DIR" "$kind in a firstmate-repo worktree"
+    personal=$(personal_claude_md "$HOME_DIR")
+    settings=$(probe_value_after "$seen" --settings)
+    printf '%s' "$settings" | jq -e --arg p "$personal" --arg a "$WT_DIR/AGENTS.md" --arg c "$WT_DIR/CLAUDE.md" \
+        '.claudeMdExcludes == [$p, $a, $c]' >/dev/null \
+      || fail "$kind in a firstmate-repo worktree: settings must also exclude the worktree's AGENTS.md and CLAUDE.md: $settings"
+    prompt=$(probe_value_after "$seen" --append-system-prompt)
+    assert_contains "$prompt" "$FM_REPO_ADDRESS_RULE" "$kind in a firstmate-repo worktree: the append must carry the no-direct-address rule"
+    assert_contains "$prompt" "$FM_REPO_WATCHER_RULE" "$kind in a firstmate-repo worktree: the append must carry the watcher rule"
+    assert_contains "$prompt" "Never wrap a shell command in base64" "$kind in a firstmate-repo worktree: the append must keep its other rules"
+  done
+  pass "a ship or scout worker in a firstmate-repo worktree skips its AGENTS.md and CLAUDE.md and carries the two binding rules"
+}
+
 make_secondmate_home() {  # <dir> <id>
   local sm=$1 id=$2
   mkdir -p "$sm/bin" "$sm/data"
-  printf '# Firstmate\n' > "$sm/AGENTS.md"
+  make_firstmate_shaped "$sm"
   printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
   printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$sm/.gitignore"
@@ -186,7 +262,7 @@ test_secondmate_launch_lean_but_keeps_personal_file() {
     assert_lean_common "$seen" "secondmate, allowlist $setting"
     settings=$(probe_value_after "$seen" --settings)
     printf '%s' "$settings" | jq -e 'has("claudeMdExcludes") | not' >/dev/null \
-      || fail "secondmate, allowlist $setting: a second mate must keep loading the personal CLAUDE.md: $settings"
+      || fail "secondmate, allowlist $setting: a second mate must keep loading the personal CLAUDE.md and its home's AGENTS.md: $settings"
     probe_has_arg "$seen" --append-system-prompt \
       && fail "secondmate, allowlist $setting: a second mate must not receive the task-worker append"
   done
@@ -354,6 +430,7 @@ $launch") || fail "relaunch with connectors $choice: the replacement launch fail
 }
 
 test_ship_and_scout_launch_lean_in_both_allowlist_postures
+test_firstmate_repo_worker_skips_the_supervisor_contract
 test_secondmate_launch_lean_but_keeps_personal_file
 test_connector_opt_in_leaves_connectors_on
 test_secondmate_refuses_connector_opt_in
