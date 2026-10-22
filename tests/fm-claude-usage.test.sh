@@ -29,11 +29,14 @@ tool_result_line() {  # <text>
 
 # A doorbell-launched ship worker: it reads its brief through a tool, one
 # request spans two transcript lines, it compacts once, and runs one subagent.
+# A Pi bridge's msg_syn_ record and an all-zero record are not real requests.
 make_worker() {
   local dir="$PROJECTS/-wt-ship" s=worker-1
   mkdir -p "$dir/$s/subagents"
   {
     user_line 2026-10-21T10:00:00Z "Firstmate operational input waiting: read '/home/state/operational-inbox/1.msg' and handle its contents as Firstmate operational input."
+    usage_line msg_syn_1 5 9000 0 3 'claude-sonnet-5-5[1m]'
+    usage_line zero 0 0 0 0
     usage_line m1 2 30000 1000 50
     usage_line m1 2 30000 1000 80
     tool_result_line "FIRSTMATE_OP: v1 launch-brief: # Current worker role contract
@@ -78,7 +81,7 @@ test_json_rows_count_firstmate_sessions_only() {
   sm=$(printf '%s\n' "$out" | jq -c 'select(.session == "sm-1")')
   assert_equals worker "$(jq -r .role <<<"$worker")" "a brief carrying the worker role contract marks a worker"
   assert_equals secondmate "$(jq -r .role <<<"$sm")" "an inline brief without it marks a secondmate"
-  assert_equals 3 "$(jq -r .requests <<<"$worker")" "two lines of one request count once and the synthetic one not at all"
+  assert_equals 3 "$(jq -r .requests <<<"$worker")" "two lines of one request count once and synthetic or all-zero ones not at all"
   assert_equals 31002 "$(jq -r .first_request <<<"$worker")" "a request's context is input plus cache creation plus cache read"
   assert_equals 33001 "$(jq -r .peak_request <<<"$worker")" "peak is the largest request"
   assert_equals 73004 "$(jq -r .main_context_total <<<"$worker")" "main context sums every request"
