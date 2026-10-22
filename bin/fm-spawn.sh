@@ -182,7 +182,9 @@
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
-#   never falls back to pi.
+#   never falls back to pi. A bare Claude-family --model (no <provider>/ prefix)
+#   also refuses there, because Pi resolves it under its default provider rather
+#   than the claude-bridge extension; name claude-bridge/<id> or another provider.
 #   Canonical Codex launches, including control-plane relaunches, explicitly
 #   request --sandbox workspace-write --ask-for-approval on-request.
 #   Reviewer handling and home-side supervision limits are owned by the Launch
@@ -1929,6 +1931,23 @@ omp_model_validate() { # <omp-bin> <model>
   return 1
 }
 
+# Pi pre-launch model check. Pi 1.1.0 resolves a model without a provider
+# prefix, including a fuzzy alias such as `opus`, under its authenticated or
+# default provider, so a bare Claude id launches against direct Anthropic and
+# never reaches the claude-bridge extension (harness-adapters pi.md). Any
+# <provider>/<id>, including a deliberate anthropic/<id>, passes unchanged.
+pi_model_validate() { # <model>
+  local model=$1 lower
+  case "$model" in '' | default | */*) return 0 ;; esac
+  lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
+  case "$lower" in
+  *claude* | *opus* | *sonnet* | *haiku* | *fable*)
+    echo "error: Pi model '$model' names no provider, so Pi resolves it under its default provider (direct Anthropic), not the claude-bridge extension; use --model claude-bridge/$model, or <provider>/<id> for another provider" >&2
+    return 1
+    ;;
+  esac
+}
+
 # agy pre-launch model validation. `agy models` (agy 1.2.0) prints one model per
 # line as "<id>\t<label>" for the account's catalog only; model ids are bare
 # (gemini-3.8-flash-high), never provider-prefixed. A requested model absent
@@ -2423,6 +2442,9 @@ fi
 if [ "$HARNESS" = omp ]; then
   omp_model_validate "$OMP_BIN" "$MODEL" || exit 1
 fi
+if [ "$RAW_LAUNCH" = 0 ] && { [ "$HARNESS" = pi ] || [ "$HARNESS" = pi-signed ]; }; then
+  pi_model_validate "$MODEL" || exit 1
+fi
 if [ "$HARNESS" = agy ]; then
   agy_model_validate "$AGY_BIN" "$MODEL" || exit 1
 fi
@@ -2652,7 +2674,7 @@ effort_flag_for_harness() {
     esac
     ;;
   pi | pi-signed)
-    # Pi 0.80.6 accepts the full shared effort vocabulary, including max, through
+    # Pi 1.1.0 accepts the full shared effort vocabulary, including max, through
     # its --thinking flag.
     case "$effort" in
     ultra)
