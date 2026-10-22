@@ -662,6 +662,51 @@ role	sessions	requests	request_mean	request_p50	request_p90	first_mean	peak_mean
 worker	101	11452	176.8k	163.8k	313.5k	31.7k	230.2k	21952.9k	15538.6k	47735.2k	14	14	12.71
 ```
 
+### Task worker marker and auto memory
+
+Verified 2026-10-22 on Claude Code 2.1.308 under a claude.ai Max subscription login (`claude auth status` in the same environment: `"authMethod": "claude.ai"`, `"subscriptionType": "max"`), in a fresh one-file git repository whose `.claude/settings.local.json` `UserPromptSubmit` and `Stop` hooks append `busy $FM_TASK_WORKER` and `idle $FM_TASK_WORKER` to a log, standing in for a worktree's busy hooks.
+`$DIS` is the `--disallowedTools` list above, and `$APPEND` the task statement without the firstmate-repo rules.
+`$SETTINGS` is the lean inline settings excluding only the personal `CLAUDE.md`, plus `"autoMemoryDirectory":"$MEM"`, where `$MEM` is either an empty directory or a copy of a 26.5 KB project memory index.
+In the guarded arms `$SOURCES` is `--setting-sources project,local`, so the unguarded personal hooks do not run, and `$SETTINGS` also carries their copies with the guards from [`configuration.md`](../configuration.md#task-worker-marker-fm_task_worker), where `$PROBE` is a script that logs `herdr-ran $FM_TASK_WORKER` in place of the herdr script:
+
+```json
+"hooks":{"SessionStart":[
+  {"matcher":"","hooks":[{"type":"command","command":"[ -n \"${FM_TASK_WORKER:-}\" ] && exit 0; gh-axi","timeout":10}]},
+  {"matcher":"","hooks":[{"type":"command","command":"[ -n \"${FM_TASK_WORKER:-}\" ] && exit 0; chrome-devtools-axi","timeout":10}]},
+  {"matcher":"","hooks":[{"type":"command","command":"[ -n \"${FM_TASK_WORKER:-}\" ] && exit 0; lavish-axi","timeout":10}]},
+  {"matcher":"^(startup|resume|clear|compact|fork)$","hooks":[{"type":"command","command":"[ \"${FM_TASK_WORKER:-}\" = pi ] && exit 0; bash '$PROBE' session","timeout":10}]}]}
+```
+
+In the real arms `$SOURCES` is empty and the personal hooks run unguarded.
+`$ARM_ENV` is empty, `FM_TASK_WORKER=claude`, `FM_TASK_WORKER=pi`, or `FM_TASK_WORKER=claude CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`.
+
+```sh
+env -i HOME="$HOME" PATH="$PATH" TMPDIR="$TMPDIR" USER="$USER" LOGNAME="$LOGNAME" TERM=xterm-256color \
+  ENABLE_CLAUDEAI_MCP_SERVERS=false $ARM_ENV CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 \
+  claude --dangerously-skip-permissions --no-chrome --disallowedTools "$DIS" --autocompact 200000 --settings "$SETTINGS" $SOURCES \
+  --append-system-prompt "$APPEND" --model claude-sonnet-5-5 --effort low -p --output-format stream-json --verbose \
+  'Reply with exactly the word OK and nothing else. Do not use any tools.'
+```
+
+The first-request total is the first assistant message's input, cache creation, and cache read tokens; the hook figures are each `hook_response` output length in characters, and the log column is the scratch log's lines for that arm.
+
+| Arm | `$ARM_ENV` | Memory index | First request | Hook output | Log |
+| --- | --- | --- | --- | --- | --- |
+| real | empty | 26.5 KB | 34,423 | 0, 264, 290, 12134 | `busy none`, `idle none` |
+| real | marker and memory off | 26.5 KB | 24,037 | 0, 264, 290, 12134 | `busy claude`, `idle claude` |
+| real | empty | empty | 24,783 | 0, 264, 290, 12134 | `busy none`, `idle none` |
+| real | marker and memory off | empty | 24,046 | 0, 290, 264, 12134 | `busy claude`, `idle claude` |
+| guarded | empty | 26.5 KB | 32,773, repeat 32,772 | 0, 264, 290, 12134 | `herdr-ran none`, `busy none`, `idle none` |
+| guarded | `FM_TASK_WORKER=claude` | 26.5 KB | 31,412 | 0, 0, 0, 0 | `herdr-ran claude`, `busy claude`, `idle claude` |
+| guarded | `FM_TASK_WORKER=pi` | 26.5 KB | 31,412 | 0, 0, 0, 0 | `busy pi`, `idle pi` |
+| guarded | marker and memory off | 26.5 KB | 21,030 | 0, 0, 0, 0 | `herdr-ran claude`, `busy claude`, `idle claude` |
+| guarded | empty | empty | 23,133 | 0, 264, 290, 12134 | `herdr-ran none`, `busy none`, `idle none` |
+| guarded | marker and memory off | empty | 21,030 | 0, 0, 0, 0 | `herdr-ran claude`, `busy claude`, `idle claude` |
+
+Turning auto memory off saved 10,386 first-request tokens with the 26.5 KB index and 737 with an empty one, and the guards saved a further 1,361.
+Both markers skipped the three tool hooks, only the `pi` marker skipped the herdr hook, and the busy hooks fired in every arm.
+`tests/fm-spawn-claude-lean-launch.test.sh` and `tests/fm-spawn-dispatch-profile.test.sh` pin the emitted environment, not the saving, so re-run these arms after a Claude Code upgrade.
+
 ## Launch-prompt backstop signatures
 
 `bin/fm-busy-lib.sh`'s launch-prompt backstop (`fm_busy_launch_prompt_parked`) reclassifies a launch whose busy record is still pinned at the fm-spawn seed as `unknown launch-prompt`, rather than `busy fm-spawn`, when the captured pane matches that harness's own recognized trust, sign-in, or first-run dialog.

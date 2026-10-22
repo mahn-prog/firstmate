@@ -969,6 +969,32 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
 }
 
+# A Pi worker started from inside a Claude session must not carry Claude's
+# entrypoint markers into the claude a Pi bridge runs, and it carries the task
+# worker marker personal hooks key on. The emitted launch runs under a
+# contrary environment with the Pi executable replaced by an env probe.
+test_pi_launch_clears_claude_markers_and_marks_the_task_worker() {
+  local harness rec id out status seen
+  for harness in pi pi-signed; do
+    id="profile-${harness}-markers-z8e"
+    rec=$(make_spawn_case "profile-${harness}-markers" "$harness" "$id")
+    read_case_record "$rec"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 0 "$status" "$harness spawn should succeed: $out"
+    cat > "$FAKEBIN_DIR/$harness" <<'SH'
+#!/bin/sh
+printf 'ENTRYPOINT=%s CLAUDECODE=%s WORKER=%s HARNESS=%s\n' "${CLAUDE_CODE_ENTRYPOINT-unset}" "${CLAUDECODE-unset}" "${FM_TASK_WORKER-unset}" "${FM_PI_HARNESS-unset}"
+SH
+    chmod +x "$FAKEBIN_DIR/$harness"
+    seen=$(env -i HOME="$CASE_DIR" PATH="$FAKEBIN_DIR:/usr/bin:/bin" CLAUDE_CODE_ENTRYPOINT=cli CLAUDECODE=1 \
+      FM_TASK_WORKER=contrary /bin/sh -c "$(cat "$LAUNCH_LOG")") || fail "$harness: the emitted launch failed to run"
+    assert_equals "ENTRYPOINT=unset CLAUDECODE=unset WORKER=pi HARNESS=$harness" "$seen" \
+      "$harness launch must clear the inherited Claude markers and mark the task worker"
+  done
+  pass "a Pi-family worker launch clears inherited Claude markers and exports the task worker marker"
+}
+
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
   local harness version rec id out status launch
   for harness in pi pi-signed; do
@@ -1047,6 +1073,8 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   assert_contains "$launch" "< '$sm/data/charter.md'" "secondmate launch lost its original charter"
   assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
     "pi-signed secondmate did not force the regular TUI with Pi's primary extension launch shape"
+  assert_contains "$launch" "env -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed'" \
+    "pi-signed secondmate must clear the inherited Claude markers and carry no task worker marker"
   if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
     printf '# evidence begin: persistent secondmate\n%s\n' "$out"
     printf 'launch command:\n%s\noriginal charter:\n' "$launch"
@@ -1089,7 +1117,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
   status=$?
   expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $CLAUDE_LEAN_FLAGS --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$CLAUDE_LEAN_SETTINGS,\"claudeMdExcludes\":[\"$HOME_DIR/user-home/.claude/CLAUDE.md\"]}'" \
+  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI ENABLE_CLAUDEAI_MCP_SERVERS=false FM_TASK_WORKER=claude CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $CLAUDE_LEAN_FLAGS --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$CLAUDE_LEAN_SETTINGS,\"claudeMdExcludes\":[\"$HOME_DIR/user-home/.claude/CLAUDE.md\"]}'" \
     "claude launch did not forward firstmate's CLAUDE_CONFIG_DIR to the crewmate pane"
   pass "claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store"
 }
@@ -1686,7 +1714,7 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/fm-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
-  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(ai_trailer_hooks_prefix "$2" "$3")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI ENABLE_CLAUDEAI_MCP_SERVERS=false CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $CLAUDE_LEAN_FLAGS --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$CLAUDE_LEAN_SETTINGS,\"claudeMdExcludes\":[\"$2/user-home/.claude/CLAUDE.md\"]}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(ai_trailer_hooks_prefix "$2" "$3")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI ENABLE_CLAUDEAI_MCP_SERVERS=false FM_TASK_WORKER=claude CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $CLAUDE_LEAN_FLAGS --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}$CLAUDE_LEAN_SETTINGS,\"claudeMdExcludes\":[\"$2/user-home/.claude/CLAUDE.md\"]}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {
@@ -1774,6 +1802,23 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
+test_non_claude_harness_ignores_claude_auto_memory() {
+  local rec id out status launch
+  id=automemory-codex-z24
+  rec=$(make_spawn_case automemory-codex codex "$id")
+  read_case_record "$rec"
+  ln -s "$CASE_DIR/missing-auto-memory-list" "$HOME_DIR/config/claude-auto-memory"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
+  status=$?
+  expect_code 0 "$status" "codex spawn with an unreadable config/claude-auto-memory should succeed: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "codex " "codex launch did not run codex"
+  assert_not_contains "$launch" "CLAUDE_CODE_DISABLE_AUTO_MEMORY" "the Claude auto-memory switch must not leak into a codex launch"
+  assert_not_contains "$launch" "FM_TASK_WORKER" "the task worker marker must not leak into a codex launch"
+  pass "config/claude-auto-memory is read by claude launches only"
+}
+
 test_codex_launch_preserves_sandbox_and_approval
 test_worker_launch_delivers_role_scope
 test_no_profile_keeps_claude_profile_defaults
@@ -1811,6 +1856,7 @@ test_native_effort_validator_keeps_axes_separate
 test_native_pi_ultra_is_explicit_and_model_scoped
 test_batch_preserves_native_ultra
 test_pi_threads_model_and_max_effort
+test_pi_launch_clears_claude_markers_and_marks_the_task_worker
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
@@ -1825,6 +1871,7 @@ test_claude_permission_mode_auto_swaps_only_the_permission_flag
 test_claude_permission_mode_auto_reaches_scout_launch
 test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
 test_non_claude_harness_ignores_claude_permission_mode
+test_non_claude_harness_ignores_claude_auto_memory
 test_non_claude_harness_ignores_config_dir
 test_claude_task_launch_carries_control_channel_authority
 test_claude_secondmate_launch_omits_task_control_channel_authority

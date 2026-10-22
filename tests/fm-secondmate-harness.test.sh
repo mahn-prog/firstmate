@@ -1033,7 +1033,7 @@ new_world() {
     [ "$dispatch_ignore" = no ] || printf 'config/crew-dispatch.json\n'
     printf 'config/crew-harness\nconfig/secondmate-harness\nconfig/backlog-backend\n'
     printf 'config/backend\nconfig/herdr-presentation-spaces\nconfig/startup-memory-budget\n'
-    printf 'config/claude-permission-mode\n'
+    printf 'config/claude-permission-mode\nconfig/claude-auto-memory\n'
   } > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
@@ -1462,6 +1462,28 @@ test_claude_permission_mode_inheritance_present_and_absent() {
   expect_code 0 "$status" "claude-permission-mode absence push should succeed"
   [ -e "$w/sm/config/claude-permission-mode" ] && fail "claude-permission-mode not removed on primary absence"
   pass "B12c claude-permission-mode inheritance: present values and primary absence converge exactly"
+}
+
+# The project opt-out list inherits the same way, so a secondmate's own workers in
+# a listed project keep Claude auto memory too.
+test_claude_auto_memory_inheritance_present_and_absent() {
+  local w head out err status
+  w=$(new_world automemory-inherit)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+
+  printf 'listed-project\n' > "$w/home/config/claude-auto-memory"
+  err="$w/automemory-inherit.err"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "claude-auto-memory present push should succeed"
+  assert_contains "$out" "claude-auto-memory: pushed" "present list should report pushed"
+  [ "$(cat "$w/sm/config/claude-auto-memory")" = listed-project ] || fail "claude-auto-memory present list not pushed"
+
+  rm -f "$w/home/config/claude-auto-memory"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "claude-auto-memory absence push should succeed"
+  [ -e "$w/sm/config/claude-auto-memory" ] && fail "claude-auto-memory not removed on primary absence"
+  pass "B12c claude-auto-memory inheritance: present lists and primary absence converge exactly"
 }
 
 test_backend_inheritance_present_and_absent() {
@@ -2665,6 +2687,7 @@ test_bootstrap_sweep_materializes_and_inherits_memory_default
 test_backend_inheritance_present_and_absent
 test_spawn_secondmate_claude_permission_mode_auto
 test_claude_permission_mode_inheritance_present_and_absent
+test_claude_auto_memory_inheritance_present_and_absent
 test_presentation_inheritance_default_on_and_opt_out
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_bootstrap_rereads_after_partial_propagation
