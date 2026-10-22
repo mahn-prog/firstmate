@@ -16,7 +16,9 @@
 # inclusive), so a before/after comparison splits on the day a launch changed.
 #
 # A request is one API call, deduplicated by message id because Claude Code
-# writes one transcript line per content block. Its context is
+# writes one transcript line per content block. Records no API call produced
+# are skipped: the <synthetic> model, a Pi bridge's msg_syn_ ids, and all-zero
+# usage. Its context is
 # input + cache_creation + cache_read tokens: everything the model was fed for
 # that turn, which is what a working-set lever moves. Subagent requests (the
 # <session>/subagents/*.jsonl files) are summed into the session total but not
@@ -81,6 +83,17 @@ def context_of(usage: dict) -> int:
     return sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
 
 
+def real_request(msg: dict) -> bool:
+    """False for a record no API call produced: Claude Code's <synthetic> model,
+    a Pi bridge's msg_syn_ id, or all-zero usage."""
+    usage = msg.get("usage")
+    if not isinstance(usage, dict) or msg.get("model") == "<synthetic>":
+        return False
+    if str(msg.get("id") or "").startswith("msg_syn_"):
+        return False
+    return context_of(usage) + int(usage.get("output_tokens") or 0) > 0
+
+
 def request_contexts(path: str) -> list[tuple[int, int]]:
     """(context, output) per unique API request in one transcript file."""
     seen: dict[str, tuple[int, int]] = {}
@@ -96,9 +109,9 @@ def request_contexts(path: str) -> list[tuple[int, int]]:
             if rec.get("type") != "assistant":
                 continue
             msg = rec.get("message") or {}
-            usage = msg.get("usage")
-            if not isinstance(usage, dict) or msg.get("model") == "<synthetic>":
+            if not real_request(msg):
                 continue
+            usage = msg["usage"]
             key = msg.get("id") or rec.get("requestId") or rec.get("uuid")
             if key not in seen:
                 order.append(key)
@@ -133,9 +146,9 @@ def read_session(path: str) -> dict | None:
                 compactions.append({"trigger": meta.get("trigger"), "pre": meta.get("preTokens"), "post": meta.get("postTokens")})
                 continue
             if kind == "assistant" and model is None:
-                m = (rec.get("message") or {}).get("model")
-                if m and m != "<synthetic>":
-                    model = m
+                msg = rec.get("message") or {}
+                if msg.get("model") and real_request(msg):
+                    model = msg["model"]
             if kind != "user":
                 continue
             body = text_of((rec.get("message") or {}).get("content"))

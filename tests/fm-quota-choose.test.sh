@@ -239,6 +239,18 @@ fi
 [ "$err" = "error: omp quota mapping covers only the openai-codex and claude-bridge prefixes: default" ] || fail "bare omp candidate returned: $err"
 ok "omp without a mapped prefix fails closed"
 
+for harness in pi pi-signed; do
+  if out=$(call_choose --snapshot "$LAB/captured.json" --candidate "$harness:claude-bridge/fable" 2>/dev/null); then
+    fail "$harness claude-bridge: the bare claude model scope did not veto, got exit 0 with '$out'"
+  fi
+  [ "$out" = "none" ] || fail "$harness claude-bridge: expected 'none' from the exhausted claude model scope, got '$out'"
+  out=$(call_choose --snapshot "$LAB/captured.json" --candidate "$harness:claude-bridge/claude-other")
+  [ "$out" = "$harness claude-bridge/claude-other" ] || fail "$harness claude-bridge: expected the provider-wide claude quota to select the prefixed model, got '$out'"
+done
+out=$(call_choose --snapshot "$LAB/captured.json" --candidate pi:openai-codex/codex_bengalfox)
+[ "$out" = "pi openai-codex/codex_bengalfox" ] || fail "pi non-bridge model left the pi row: $out"
+ok "pi claude-bridge prefix matches the bare claude model scope; other pi models keep the pi row"
+
 out=$(call_choose --snapshot "$LAB/captured.json" --candidate codex:default)
 [ "$out" = "codex default" ] || fail "default scope: expected provider-wide quota, got '$out'"
 ok "default model uses provider-wide quota"
@@ -667,6 +679,13 @@ JSON
 out=$(call_choose --snapshot "$SCHEMA6" --candidate codex:default --candidate cursor:default)
 [ "$out" = "cursor default" ] || fail "schema 6 snapshot returned: $out"
 ok "native Codex never infers an account from a Pi lane"
+
+jq '.providers |= map(if .provider == "claude" then .quotaSemantics = { "status": "known", "effectiveAvailability": [
+  { "scope": "all_models", "status": "known", "effectivePercentRemaining": 40, "runway": { "status": "through_reset" } } ] } else . end)' \
+  "$SCHEMA6" > "$LAB/schema6-claude.json"
+out=$(call_choose --snapshot "$LAB/schema6-claude.json" --candidate pi:claude-bridge/claude-other --candidate cursor:default)
+[ "$out" = "pi claude-bridge/claude-other" ] || fail "pi claude-bridge did not bind the claude default row: $out"
+ok "pi claude-bridge binds the claude provider's default row"
 
 SCHEMA6_NATIVE="$LAB/schema6-native.json"
 jq '

@@ -47,6 +47,8 @@
 # its own Codex login, so an openai-codex candidate reads as unknown quota here
 # and is never selected on this host; its runway is disclosed uncertainty for
 # the agent-side gates, not measured headroom.
+# pi and pi-signed check a claude-bridge/<id> candidate the same way, against
+# the claude row and the bare <id>; any other Pi model checks the pi row.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -377,7 +379,9 @@ for c in "${CANDIDATES[@]}"; do
   [ "$model" = "$c" ] && model="default"
   provider=$(provider_for_harness "$harness" "$model")
   scope_model=$model
-  [ "$harness" != omp ] || scope_model=${model#*/}
+  case "$harness:$model" in
+    omp:* | pi:claude-bridge/* | pi-signed:claude-bridge/*) scope_model=${model#*/} ;;
+  esac
   lane=$(jq -rn --arg h "$harness" --arg m "$model" "$FM_QUOTA_ROW_JQ"'quota_lane($h; $m)')
   effective=$(effective_for_provider_model "$provider" "$scope_model" "$lane")
   if [ -z "$effective" ] || [ "$effective" = "null" ]; then

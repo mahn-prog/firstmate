@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend), [harness support](#harness-support), and [host profiles](#host-profiles-confighost-profiles) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Claude auto memory](#claude-auto-memory-configclaude-auto-memory), [task worker marker](#task-worker-marker-fm_task_worker), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), [Calm preference](#calm-preference-configcalm), and [worker parking](#worker-parking-configworker-park) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -827,6 +827,7 @@ Kimi continues to use the captain's normal Kimi home, including the existing con
 The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
 
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
+A Pi or pi-signed launch built from its adapter template clears any inherited `CLAUDE_CODE_ENTRYPOINT` and `CLAUDECODE`, so a `claude` that a Pi bridge extension starts reports its own entrypoint rather than its Claude parent's.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
 For omp secondmate launches, `fm-spawn.sh` passes no `-e` at all: omp auto-discovers the home's tracked `.omp/extensions/` with no trust gate, and naming a discovered file with `-e` as well loads it twice; every omp launch instead carries the tracked `.omp/fm-worker-overlay.yml` posture overlay through `--config`, which [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns.
@@ -878,6 +879,36 @@ The diagnostic names the accepted values; Firstmate never falls back to a permis
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
+
+## Claude auto memory (config/claude-auto-memory)
+
+A Claude ship or scout worker launched from the adapter template starts with Claude Code's auto memory off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`); a secondmate and a raw launch command keep it.
+Every worktree of a project shares one auto-memory directory, so its index loads into every worker request and its notes can be stale for the task at hand.
+The [Claude lean start record](verification/runtime-backends.md#task-worker-marker-and-auto-memory) measures the saving.
+
+The optional local, gitignored `config/claude-auto-memory` lists the projects whose Claude workers keep auto memory, one project directory name per line, with surrounding whitespace ignored.
+Keep a project listed while a safety lesson lives only in its auto memory, and remove it once those lessons live in the project's own instructions.
+A project's own settings cannot opt out, because the launch environment outranks them.
+
+`bin/fm-spawn.sh` reads the file on every Claude ship or scout spawn and relaunch, and an unreadable file refuses that spawn before any endpoint, worktree, or task record exists.
+The file is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract, so a secondmate's own workers in a listed project keep auto memory too.
+
+## Task worker marker (FM_TASK_WORKER)
+
+A Claude ship or scout launch built from its adapter template carries `FM_TASK_WORKER=claude`, and a Pi or pi-signed one carries `FM_TASK_WORKER=pi`.
+A secondmate launch and a raw launch command carry no marker.
+The marker lets a personal Claude hook that only serves an interactive session skip task workers, including the `claude` a Pi bridge extension starts inside a Pi worker, which inherits the Pi worker's environment.
+
+Firstmate never edits the personal `~/.claude/settings.json`; to skip a hook, prepend its guard to the hook's `command` there.
+
+| Hook command | Guard to prepend | Skips |
+| --- | --- | --- |
+| `gh-axi`, `chrome-devtools-axi`, `lavish-axi` | `[ -n "${FM_TASK_WORKER:-}" ] && exit 0; ` | every task worker |
+| `bash '<home>/.claude/hooks/herdr-agent-state.sh' session` | `[ "${FM_TASK_WORKER:-}" = pi ] && exit 0; ` | only the `claude` inside a Pi worker |
+
+The herdr guard keeps a plain Claude worker's pane status, because that worker carries `claude`, while Pi's own lifecycle hooks remain the only status source for a Pi worker's pane.
+A herdr reinstall rewrites its own hook entry, so reapply its guard after one.
+The worktree busy hooks Firstmate writes to `.claude/settings.local.json` carry no guard and still fire in every worker.
 
 ## Worker account pin (config/claude-account, config/pi-account)
 

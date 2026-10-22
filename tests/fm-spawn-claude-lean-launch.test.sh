@@ -6,7 +6,9 @@
 # workers only - the captain's personal ~/.claude/CLAUDE.md excluded with its
 # two load-bearing rules carried in the worker system-prompt append, plus, in a
 # firstmate-repo worktree only, that worktree's AGENTS.md and CLAUDE.md
-# excluded with the two worker-binding rules they alone carried.
+# excluded with the two worker-binding rules they alone carried. A ship or
+# scout worker also carries the FM_TASK_WORKER=claude marker and starts with
+# Claude auto memory off unless its project is listed in config/claude-auto-memory.
 #
 # The assertions never read bin/fm-spawn.sh's source. They drive the real spawn
 # against a fake pane and a real isolated git worktree, then EXECUTE the launch
@@ -75,6 +77,8 @@ install_claude_probe() {  # <fakebin>
   cat > "$1/claude" <<'SH'
 #!/bin/sh
 printf 'CONNECTORS=%s\n' "${ENABLE_CLAUDEAI_MCP_SERVERS-unset}"
+printf 'WORKER=%s\n' "${FM_TASK_WORKER-unset}"
+printf 'AUTOMEMORY=%s\n' "${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}"
 for a in "$@"; do printf 'ARG=%s\n' "$a"; done
 SH
   chmod +x "$1/claude"
@@ -101,6 +105,20 @@ $launch"
 
 probe_value_after() {  # <probe-output> <flag>: the argument that follows <flag>
   printf '%s\n' "$1" | awk -v flag="ARG=$2" 'found { sub(/^ARG=/, ""); print; exit } $0 == flag { found = 1 }'
+}
+
+probe_line() {  # <probe-output> <KEY>: the probe's KEY=value line
+  printf '%s\n' "$1" | grep "^$2=" | head -1
+}
+
+# A ship or scout worker carries the task worker marker and, unless its
+# project opted out, starts with auto memory off.
+#   assert_task_worker_env <probe-output> <on|off> <label>
+assert_task_worker_env() {
+  local seen=$1 memory=$2 label=$3 expected=AUTOMEMORY=1
+  [ "$memory" = off ] || expected=AUTOMEMORY=unset
+  assert_equals WORKER=claude "$(probe_line "$seen" WORKER)" "$label: a task worker must carry FM_TASK_WORKER=claude"
+  assert_equals "$expected" "$(probe_line "$seen" AUTOMEMORY)" "$label: auto memory must be $memory"
 }
 
 probe_has_arg() {  # <probe-output> <arg>
@@ -163,6 +181,7 @@ test_ship_and_scout_launch_lean_in_both_allowlist_postures() {
       assert_lean_common "$seen" "$kind, allowlist $setting"
       assert_worker_excludes_personal_file "$seen" "$HOME_DIR" "$kind, allowlist $setting"
       assert_project_memory_kept "$seen" "$HOME_DIR" "$kind, allowlist $setting"
+      assert_task_worker_env "$seen" off "$kind, allowlist $setting"
     done
   done
   pass "ship and scout Claude launches start lean and exclude the personal CLAUDE.md under both allowlist postures"
@@ -207,9 +226,10 @@ test_firstmate_repo_worker_skips_the_supervisor_contract() {
     make_firstmate_shaped "$WT_DIR"
     # A pooled worktree must be clean and the spawn resets it to origin's
     # default branch, so the identity files are committed and pushed there.
-    git -C "$WT_DIR" add -A && git -C "$WT_DIR" -c user.name=t -c user.email=t@t commit -qm firstmate-shaped \
-      && git -C "$WT_DIR" push -q origin HEAD:main \
-      || fail "$kind: could not commit the firstmate-shaped worktree"
+    if ! { git -C "$WT_DIR" add -A && git -C "$WT_DIR" -c user.name=t -c user.email=t@t commit -qm firstmate-shaped \
+      && git -C "$WT_DIR" push -q origin HEAD:main; }; then
+      fail "$kind: could not commit the firstmate-shaped worktree"
+    fi
     if [ "$kind" = ship ]; then
       out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
     else
@@ -265,8 +285,60 @@ test_secondmate_launch_lean_but_keeps_personal_file() {
       || fail "secondmate, allowlist $setting: a second mate must keep loading the personal CLAUDE.md and its home's AGENTS.md: $settings"
     probe_has_arg "$seen" --append-system-prompt \
       && fail "secondmate, allowlist $setting: a second mate must not receive the task-worker append"
+    assert_equals WORKER=unset "$(probe_line "$seen" WORKER)" "secondmate, allowlist $setting: a second mate is not a task worker"
+    assert_equals AUTOMEMORY=unset "$(probe_line "$seen" AUTOMEMORY)" "secondmate, allowlist $setting: a second mate keeps auto memory"
   done
   pass "a secondmate Claude launch starts lean and keeps the personal CLAUDE.md"
+}
+
+# config/claude-auto-memory lists the projects whose workers keep Claude auto
+# memory, by project directory name; every other project's workers start
+# without it.
+test_auto_memory_opt_out_keeps_memory_for_listed_projects() {
+  local rec out status seen kind id
+  for kind in ship scout; do
+    id="$kind-automemory-a1"
+    rec=$(make_case "$kind-automemory" "$id")
+    read_case "$rec"
+    # Surrounding whitespace, including a CRLF line end, is ignored.
+    printf 'other-project\n  %s \r\n' "$(basename "$PROJ_DIR")" > "$HOME_DIR/config/claude-auto-memory"
+    if [ "$kind" = ship ]; then
+      out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+    else
+      out=$(run_case_spawn "$id" "$PROJ_DIR" --scout)
+    fi
+    status=$?
+    expect_code 0 "$status" "$kind spawn with an auto-memory opt-out should succeed: $out"
+    seen=$(emitted_launch_probe "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" unset) \
+      || fail "$kind with an auto-memory opt-out: the emitted launch failed to run"
+    assert_task_worker_env "$seen" on "$kind in a listed project"
+    assert_lean_common "$seen" "$kind in a listed project"
+  done
+  id=ship-unlisted-a1
+  rec=$(make_case ship-unlisted "$id")
+  read_case "$rec"
+  printf 'other-project\n' > "$HOME_DIR/config/claude-auto-memory"
+  out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "ship spawn in a project the opt-out list omits should succeed: $out"
+  seen=$(emitted_launch_probe "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG" unset) \
+    || fail "ship in an unlisted project: the emitted launch failed to run"
+  assert_task_worker_env "$seen" off "ship in an unlisted project"
+  pass "a project listed in config/claude-auto-memory keeps auto memory for its workers, and only it"
+}
+
+test_unreadable_auto_memory_list_refuses_the_spawn() {
+  local rec out status id=ship-automemory-unreadable
+  rec=$(make_case ship-automemory-unreadable "$id")
+  read_case "$rec"
+  ln -s "$CASE_DIR/missing-auto-memory-list" "$HOME_DIR/config/claude-auto-memory"
+  out=$(run_case_spawn "$id" "$PROJ_DIR" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a ship spawn with an unreadable config/claude-auto-memory should refuse: $out"
+  assert_contains "$out" "config/claude-auto-memory" "the refusal should name the file: $out"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused spawn must not launch anything"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused spawn must not write a task record"
+  pass "an unreadable config/claude-auto-memory refuses a Claude task worker spawn before launching"
 }
 
 test_connector_opt_in_leaves_connectors_on() {
@@ -423,6 +495,7 @@ $launch") || fail "relaunch with connectors $choice: the replacement launch fail
     assert_equals "$expected" "$(printf '%s\n' "$seen" | head -1)" \
       "a relaunched worker must keep the connector choice its task was spawned with ($choice)"
     assert_lean_common "$seen" "relaunch, connectors $choice"
+    assert_task_worker_env "$seen" off "relaunch, connectors $choice"
     grep -c '^claude_connectors=on$' "$home/state/$id.meta" | grep -qx "$([ "$choice" = default ] && echo 0 || echo 1)" \
       || fail "relaunch with connectors $choice: the task record must keep exactly its connector choice"
   done
@@ -432,6 +505,8 @@ $launch") || fail "relaunch with connectors $choice: the replacement launch fail
 test_ship_and_scout_launch_lean_in_both_allowlist_postures
 test_firstmate_repo_worker_skips_the_supervisor_contract
 test_secondmate_launch_lean_but_keeps_personal_file
+test_auto_memory_opt_out_keeps_memory_for_listed_projects
+test_unreadable_auto_memory_list_refuses_the_spawn
 test_connector_opt_in_leaves_connectors_on
 test_secondmate_refuses_connector_opt_in
 test_relaunch_keeps_the_connector_choice
