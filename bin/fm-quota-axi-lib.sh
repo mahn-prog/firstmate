@@ -32,6 +32,8 @@ FM_QUOTA_PROVIDER_ID_RE='^[a-z0-9]+(-[a-z0-9]+)*\z'
 FM_QUOTA_ROW_JQ='
   def quota_lane($harness; $model):
     if $harness == "codex" then "codex-home"
+    elif ($harness == "pi" or $harness == "pi-signed") and (($model // "") | startswith("claude-bridge/"))
+    then ""
     elif ($harness == "pi" or $harness == "pi-signed") and (($model // "") | contains("/"))
     then ($model | split("/") | first | if . == "codex-native" then "codex-home" else . end)
     else "" end;
@@ -168,7 +170,12 @@ fm_quota_provider_for_harness() {
     claude)       printf 'claude\n' ;;
     codex)        printf 'codex\n' ;;
     opencode)     printf 'codex\n' ;;
-    pi|pi-signed) printf 'pi\n' ;;
+    pi|pi-signed)
+      case "${2:-}" in
+        claude-bridge/*) printf 'claude\n' ;;
+        *)               printf 'pi\n' ;;
+      esac
+      ;;
     grok)         printf 'grok\n' ;;
     kimi)         printf 'kimi\n' ;;
     cursor)       printf 'cursor\n' ;;
