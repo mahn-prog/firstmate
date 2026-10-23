@@ -127,6 +127,8 @@
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
 #   FM_CONTROL_SETTLE_WAIT       adapter acknowledgement wait after interrupt (5)
+#   FM_CONTROL_COMPOSER_SETTLE_WAIT  wait for an unknown composer to settle
+#                                before exit refuses it (10)
 #   FM_CONTROL_ARM_WAIT          wait for an armed interrupt's rendered proof
 #                                after the press gap (1.5)
 #   FM_CONTROL_EXIT_WAIT         alive->dead wait after the exit command (30)
@@ -183,6 +185,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
 ARM_WAIT=${FM_CONTROL_ARM_WAIT:-1.5}
+COMPOSER_SETTLE_WAIT=${FM_CONTROL_COMPOSER_SETTLE_WAIT:-10}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
@@ -560,6 +563,28 @@ retire_busy_incarnation() {
   fi
 }
 
+# settled_composer_state: the composer verdict exit acts on. `unknown` is the
+# one verdict that can be transient rather than a finding: an agent whose turn
+# was just interrupted, or had only just ended, can still report itself working
+# while that turn settles. Pi on herdr is the verified case - its state reaches
+# herdr from an end-of-run extension handler that Pi runs only after every
+# project extension's handler, so for a moment after Escape an idle, empty Pi
+# composer reads `unknown`, and a single read refused every such exit. So
+# `unknown` is re-read until it resolves, within COMPOSER_SETTLE_WAIT. `empty`
+# and `pending` are positive readings and return at once, and a composer still
+# `unknown` at the bound is returned as `unknown`, which exit refuses.
+settled_composer_state() {
+  local state elapsed=0
+  while :; do
+    state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || state=unknown
+    [ "$state" = unknown ] || break
+    awk -v e="$elapsed" -v t="$COMPOSER_SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  printf '%s' "$state"
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
@@ -637,8 +662,7 @@ do_exit() {
   if [ -n "$hazard" ] && rendered_matches "$hazard"; then
     die "task $ID shows the $HARNESS revert picker, where typed text becomes a search and Enter reverts file changes; refusing to type the $cmd exit command. Close it with $(fm_control_interrupt_key "$HARNESS"), never Enter, then retry '$VERB'"
   fi
-  composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
-    || composer_state=unknown
+  composer_state=$(settled_composer_state)
   case "$composer_state" in
     empty) ;;
     pending)

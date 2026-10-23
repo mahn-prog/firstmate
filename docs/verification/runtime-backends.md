@@ -2553,6 +2553,26 @@ Observed results:
 - `relaunch` printed `relaunched <id> harness=pi from=pi model=claude-bridge/claude-haiku-5-5 effort=low backend=tmux ...`, started a new Pi session file (the tmux backend passes no `--session`, as `relaunch_resume_args` in `bin/fm-spawn.sh` records), resumed work from the unacknowledged inbox record, replied `RELAUNCHED`, and settled idle with a fresh turn-end touch.
 - A second worker spawned the same way into a sibling clone after the lab `trust.json` saved their common parent directory showed no trust dialog, processed its brief directly, and added no entry to `trust.json`.
 
+### 2026-10-23 Pi 1.1.0 interrupt settle on herdr
+
+Verified 2026-10-23 on macOS arm64 with herdr 0.9.1, herdr's Pi integration version 9 (`~/.pi/agent/extensions/herdr-agent-state.ts`), and Pi 1.1.0 second mates in regular TUI mode on claude-bridge.
+The captures were read-only; nothing was typed into a live pane.
+
+```sh
+herdr --session default pane read <pane> --source visible --format ansi
+herdr --session default agent get <pane> | jq -r '[.result.agent.agent, .result.agent.agent_status]|@tsv'
+```
+
+Observed results:
+
+- Four idle second mates read `pi	done`, and their composer is a lone reverse-video cursor cell between two `38;2;151;118;229` rules, which `fm_composer_classify_screen` reads `empty`; `tests/fm-composer-lib.test.sh` `test_real_pi_1_1_0_herdr_captures` pins those bytes.
+- herdr's Pi integration reports `idle` only from its `agent_settled` handler, Pi's extension runner awaits `agent_settled` handlers one after another, and Pi loads project `.pi/extensions` before user extensions, so after an interrupt herdr keeps reporting `working` until Firstmate's own end-of-run handlers finish.
+- Every refused Pi second-mate exit that day followed an interrupted turn: the mate's final assistant message ends `stopReason: aborted` within two seconds before the refusal, while the one mate whose turn had already ended restarted cleanly.
+  `bin/fm-control.sh`'s bounded composer settle (`FM_CONTROL_COMPOSER_SETTLE_WAIT`) exists for this, and `tests/fm-control.test.sh` `test_pi_exit_waits_for_the_interrupted_turn_to_settle` pins it.
+- Escape while Pi streams calls `restoreQueuedMessagesToEditor({ abort: true })`, which joins every queued steering and follow-up message with a blank line ahead of the editor text, so a watcher wake queued during the turn was left in one mate's composer as six rows starting `FIRSTMATE_OP: v1 watcher:`; the rendered rows do not show the operational marker.
+  `.pi/extensions/fm-primary-pi-watch.ts` "Restored-wake recovery" owns the response, and `tests/fm-pi-watch-extension.test.sh` `test_pi_aborted_run_recovers_only_its_own_restored_wake` pins it.
+- On tmux the same interrupt-then-exit sequence against a real Pi 1.1.0 did not refuse, because tmux's Pi identity reads the rendered `Working...` row, which clears at the abort.
+
 ## Native Codex through Pi
 
 Verified on 2026-09-08 with Pi 0.85.1 and the installed `pi-codex-native` 0.2.1 adapter.

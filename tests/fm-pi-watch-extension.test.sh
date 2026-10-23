@@ -2819,6 +2819,146 @@ EOF
   pass "Pi streaming-time wake delivery keeps the successor chain and replays only unconsumed wakes"
 }
 
+# An interrupt (Escape, or an extension abort) while main streams makes Pi move
+# every queued follow-up into the editor, so a watcher wake Firstmate itself
+# queued is left typed but unsubmitted and every later steer or exit command
+# refuses the pending composer. The extension recovers only its own text: an
+# exact, still-unconsumed wake it sent, carrying the operational marker, is
+# taken out of the editor and delivered again, while anything a person typed
+# stays exactly where it was, and an edited or already-consumed copy is never
+# treated as Firstmate's.
+test_pi_aborted_run_recovers_only_its_own_restored_wake() {
+  local repo home plugin log trigger out status
+  repo="$TMP_ROOT/pi-restored-wake-root"
+  home="$TMP_ROOT/pi-restored-wake-home"
+  log="$TMP_ROOT/pi-restored-wake.log"
+  trigger="$TMP_ROOT/pi-restored-wake.trigger"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'confirmed=%s\n' "$2" >> "${FM_ARM_LOG:?}"
+  exit 0
+fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+count=$(grep -c '^arm=' "$FM_ARM_LOG")
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=restore-%s\n' "$$" "$count"
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_TRIGGER_FILE.$count" ]; do sleep 0.02; done
+printf 'signal: restored wake %s\n' "$count"
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_TRIGGER_FILE="$trigger" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const handlers = new Map();
+const prompts = [];
+let streaming = false;
+const pi = {
+  on(event, handler) {
+    handlers.set(event, handler);
+  },
+  registerCommand() {},
+  registerTool() {},
+  sendUserMessage: async (message) => {
+    prompts.push(message);
+    if (streaming) return;
+    handlers.get("before_agent_start")?.({ prompt: message }, {});
+  },
+  events: { on() {}, emit() {} },
+};
+const consumeQueued = (message) =>
+  handlers.get("message_start")?.({ message: { role: "user", content: [{ type: "text", text: message }] } }, {});
+const arms = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").split("\n").filter((row) => row.startsWith("arm=")).length
+  : 0;
+async function waitFor(pred, label) {
+  for (let i = 0; i < 500; i += 1) {
+    if (pred()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timeout waiting for ${label}`);
+}
+// The Pi editor as restoreQueuedMessagesToEditor leaves it: the queued messages
+// joined by a blank line, ahead of whatever was already typed.
+let editor = "";
+let editorWrites = 0;
+const ctx = {
+  ui: {
+    getEditorText: () => editor,
+    setEditorText: (text) => {
+      editor = text;
+      editorWrites += 1;
+    },
+  },
+};
+const settle = async (aborted) => {
+  streaming = false;
+  await handlers.get("agent_settled")?.({ type: "agent_settled", aborted }, ctx);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
+
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, {});
+await waitFor(() => arms() === 1, "first arm");
+streaming = true;
+writeFileSync(`${process.env.FM_TRIGGER_FILE}.1`, "close\n");
+await waitFor(() => prompts.length === 1, "first wake queued while main streams");
+await waitFor(() => arms() === 2, "successor after the first wake");
+writeFileSync(`${process.env.FM_TRIGGER_FILE}.2`, "close\n");
+await waitFor(() => prompts.length === 2, "second wake queued while main streams");
+await waitFor(() => arms() === 3, "successor after the second wake");
+const [first, second] = prompts;
+if (!second.includes("signal: restored wake 2") || !second.startsWith("\u2063")) {
+  throw new Error(`the queued wake should carry the operational marker: ${JSON.stringify(second)}`);
+}
+
+// The run consumed the first wake; the interrupt restored the second ahead of
+// a draft a person typed.
+consumeQueued(first);
+editor = [second, "my own draft"].join("\n\n");
+await settle(true);
+if (editor !== "my own draft") throw new Error(`only the Firstmate wake may leave the editor, left: ${JSON.stringify(editor)}`);
+if (prompts.length !== 3 || prompts[2] !== second) {
+  throw new Error(`the restored wake should be delivered again exactly once: ${JSON.stringify(prompts)}`);
+}
+
+// The redelivered wake was consumed, so the same text in the editor now is no
+// longer Firstmate text to submit; neither is an edited copy, nor a wake left by a
+// run that ended without an abort.
+editorWrites = 0;
+editor = second;
+await settle(true);
+if (editorWrites !== 0 || prompts.length !== 3) throw new Error("the text of a consumed wake must be left alone");
+streaming = true;
+writeFileSync(`${process.env.FM_TRIGGER_FILE}.3`, "close\n");
+await waitFor(() => prompts.length === 4, "third wake queued while main streams");
+const third = prompts[3];
+editor = `${third} plus an edit`;
+await settle(true);
+if (editorWrites !== 0 || prompts.length !== 4) throw new Error("an edited wake must be left alone");
+editor = third;
+await settle(false);
+if (editorWrites !== 0 || prompts.length !== 4) throw new Error("a run that ended without an abort restores nothing");
+await settle(true);
+if (editor !== "" || prompts.length !== 5 || prompts[4] !== third) {
+  throw new Error(`an exact restored wake is recovered: editor=${JSON.stringify(editor)} prompts=${prompts.length}`);
+}
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi must recover only its own wake restored into the editor by an aborted run"
+  [ -z "$out" ] || fail "Pi restored-wake recovery test printed output: $out"
+  pass "Pi recovers only its own wake restored into the editor by an aborted run"
+}
+
 # A verified successor can die while the wake it was started for is still
 # being delivered (a branch turn can take minutes). Its failure close arrives
 # while the pipeline is busy, so the ordinary retry path must be deferred to
@@ -4422,6 +4562,7 @@ test_pi_session_transition_generation_owner
 test_pi_session_replacement_carries_inflight_actionable_close
 test_pi_streaming_followup_is_replayed_after_replacement
 test_pi_streaming_time_delivery_keeps_the_successor_chain
+test_pi_aborted_run_recovers_only_its_own_restored_wake
 test_pi_successor_failure_during_delivery_is_retried_after_delivery
 test_pi_late_retiring_actionable_reaches_replacement
 test_pi_replacement_tokens_are_process_unique
