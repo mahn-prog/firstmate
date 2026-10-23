@@ -38,7 +38,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { registerFirstmateTool } from "./lib/fm-native-contract.ts";
@@ -113,6 +113,11 @@ type SessionGeneration = {
   // replacement began reads it to tell a main-queued wake (replayed) from a
   // branch-handled one (finished).
   unconsumedWakes: Map<string, UnconsumedWake>;
+  // The exact text of every wake this generation sent that Pi has not yet
+  // consumed, pending-tracked or not, in send order. It is the ownership proof
+  // for restoredWakeRecovery: only text that is byte-for-byte one of these may
+  // be taken back out of the editor.
+  inFlightWakeTexts: string[];
   // A verified successor's failure close that arrived while the pipeline was
   // still delivering the wake it was started for; its bounded retry runs once
   // that delivery settles instead of being skipped by the single-flight guard.
@@ -466,12 +471,18 @@ function createGeneration(): SessionGeneration {
     pendingActionables: [],
     cleanupFailure: "",
     unconsumedWakes: new Map(),
+    inFlightWakeTexts: [],
     deferredClose: null,
   };
 }
 
 function activateGeneration(generation: SessionGeneration): void {
   activeGeneration = generation;
+}
+
+function forgetInFlightWakeText(generation: SessionGeneration, text: string): void {
+  const index = generation.inFlightWakeTexts.indexOf(text);
+  if (index >= 0) generation.inFlightWakeTexts.splice(index, 1);
 }
 
 function generationIsLive(generation: SessionGeneration): boolean {
@@ -579,10 +590,12 @@ export default function (pi: ExtensionAPI) {
       `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
     );
     if (pending) owner.unconsumedWakes.set(pending.token, { content, pending });
+    owner.inFlightWakeTexts.push(content);
     try {
       await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch (error) {
       if (pending) owner.unconsumedWakes.delete(pending.token);
+      forgetInFlightWakeText(owner, content);
       throw error;
     }
     // Accepted by Pi. A generation replaced while Pi was accepting it may
@@ -591,9 +604,59 @@ export default function (pi: ExtensionAPI) {
     return generationIsLive(owner);
   }
 
+  // Restored-wake recovery (stated once here): an abort while main streams -
+  // Escape, or an extension abort - makes Pi move every queued follow-up into
+  // the editor (restoreQueuedMessagesToEditor joins them with a blank line
+  // ahead of any text already there) and nothing submits them. A watcher wake
+  // left there is not lost, because its record stays in the durable queue,
+  // but it blocks every later steer and exit command, which refuse a composer
+  // holding text, until a person presses Enter. So after an aborted run the
+  // extension takes back only text it can prove it typed: a blank-line-
+  // delimited segment that is byte-for-byte a wake this generation sent and Pi
+  // has not consumed, which carries the operational marker no capture or
+  // keyboard reproduces. Each such segment leaves the editor and is delivered
+  // again; everything else, including a person's draft beside it, stays
+  // exactly as it was. An edited copy, or the same text after Pi consumed it,
+  // is not proven Firstmate's and is left alone.
+  async function recoverRestoredWakes(owner: SessionGeneration, ctx: ExtensionContext | undefined): Promise<void> {
+    if (!generationIsLive(owner) || owner.inFlightWakeTexts.length === 0) return;
+    const ui = ctx?.ui;
+    if (typeof ui?.getEditorText !== "function" || typeof ui?.setEditorText !== "function") return;
+    const segments = ui.getEditorText().split("\n\n");
+    const owned = new Set(owner.inFlightWakeTexts);
+    const recovered: string[] = [];
+    const kept: string[] = [];
+    let i = 0;
+    while (i < segments.length) {
+      // A wake's own text can contain blank lines, so match it as a run of
+      // whole segments rather than one.
+      const match = owner.inFlightWakeTexts.find((text) => {
+        if (!owned.has(text)) return false;
+        const width = text.split("\n\n").length;
+        return segments.slice(i, i + width).join("\n\n") === text;
+      });
+      if (match === undefined) {
+        kept.push(segments[i]);
+        i += 1;
+        continue;
+      }
+      owned.delete(match);
+      recovered.push(match);
+      i += match.split("\n\n").length;
+    }
+    if (recovered.length === 0) return;
+    ui.setEditorText(kept.join("\n\n"));
+    for (const text of recovered) {
+      forgetInFlightWakeText(owner, text);
+      owner.inFlightWakeTexts.push(text);
+      await pi.sendUserMessage(text, { deliverAs: "followUp" });
+    }
+  }
+
   // Pi consumed a main follow-up: an idle main at before_agent_start, a
   // streaming main at the user message_start that joins the running run.
   function consumeWake(owner: SessionGeneration, text: string): void {
+    forgetInFlightWakeText(owner, text);
     for (const [token, wake] of owner.unconsumedWakes) {
       if (wake.content !== text) continue;
       owner.unconsumedWakes.delete(token);
@@ -1119,6 +1182,10 @@ export default function (pi: ExtensionAPI) {
 
   pi.on?.("before_agent_start", (event) => {
     consumeWake(generation, event.prompt);
+  });
+  pi.on?.("agent_settled", async (event, ctx) => {
+    if (event?.aborted !== true) return;
+    await recoverRestoredWakes(generation, ctx);
   });
   pi.on?.("message_start", (event) => {
     if (event.message.role !== "user") return;
