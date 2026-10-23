@@ -115,7 +115,7 @@ type SessionGeneration = {
   unconsumedWakes: Map<string, UnconsumedWake>;
   // The exact text of every wake this generation sent that Pi has not yet
   // consumed, pending-tracked or not, in send order. It is the ownership proof
-  // for restoredWakeRecovery: only text that is byte-for-byte one of these may
+  // for restored-wake recovery (recoverRestoredWakes): only text that is byte-for-byte one of these may
   // be taken back out of the editor.
   inFlightWakeTexts: string[];
   // A verified successor's failure close that arrived while the pipeline was
@@ -613,8 +613,8 @@ export default function (pi: ExtensionAPI) {
   // holding text, until a person presses Enter. So after an aborted run the
   // extension takes back only text it can prove it typed: a blank-line-
   // delimited segment that is byte-for-byte a wake this generation sent and Pi
-  // has not consumed, which carries the operational marker no capture or
-  // keyboard reproduces. Each such segment leaves the editor and is delivered
+  // has not consumed, including the invisible operational marker a person does
+  // not type and a screen capture does not show. Each such segment leaves the editor and is delivered
   // again; everything else, including a person's draft beside it, stays
   // exactly as it was. An edited copy, or the same text after Pi consumed it,
   // is not proven Firstmate's and is left alone.
