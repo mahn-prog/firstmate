@@ -2500,6 +2500,59 @@ ok - under the away-posture record the wake carries the verbatim read-back tail,
 
 The merge suite and the security suite dominate the wall time.
 
+## Pi 1.1.0 worker lifecycle through claude-bridge
+
+Verified 2026-10-22 on macOS arm64 with tmux, Pi 1.1.0 as a plain Node install with no signed launcher, and the pi-claude-bridge 0.9.3 extension.
+The run used an isolated Firstmate home, a private tmux socket, scout briefs in scratch clones, and `PI_CODING_AGENT_DIR` pointing at a copy of the operator's Pi agent directory without its credentials, so every trust answer was written to that copy and the operator's `~/.pi/agent/trust.json` and `settings.json` hashes were unchanged afterwards.
+`references/harness/pi.md` in the harness-adapters skill owns the resulting adapter facts.
+
+Version and provider facts, read without spending tokens:
+
+```sh
+pi --version
+pi --help | grep -- '--tui-mode'
+pi auth check --provider anthropic --json --no-refresh
+pi auth check --provider claude-bridge --json --no-refresh
+pi --list-models | grep -E '^(anthropic|claude-bridge) ' | grep -E 'haiku-5-5|sonnet-5-5|opus-5-5'
+```
+
+```text
+1.1.0
+  --tui-mode <mode>              TUI mode: fullscreen (default) or regular
+{"status":"ready","provider":"anthropic","authType":"oauth"}
+{"status":"not_ready","provider":"claude-bridge","reason":"provider_not_found"}
+anthropic       claude-haiku-5-5                                  1M       128K     yes       yes
+anthropic       claude-opus-5-5                                   1M       128K     yes       yes
+anthropic       claude-sonnet-5-5                                 1M       128K     yes       yes
+claude-bridge   claude-haiku-5-5                                  1M       128K     yes       yes
+claude-bridge   claude-opus-5-5                                   1M       128K     yes       yes
+claude-bridge   claude-sonnet-5-5                                 1M       128K     yes       yes
+```
+
+Both providers list the same Claude ids and only `anthropic` is an authenticated built-in provider, so Pi's resolver sends a bare Claude id to direct Anthropic; `tests/fm-spawn-dispatch-profile.test.sh` pins the resulting spawn refusal.
+
+The live worker was spawned and controlled only through Firstmate's own scripts:
+
+```sh
+bin/fm-spawn.sh <id> <project> --scout --harness pi --model claude-bridge/claude-haiku-5-5 --effort low --backend tmux
+bin/fm-send.sh <id> --key Enter
+bin/fm-send.sh <id> "Run the shell command: sleep 90 && echo SLEPT. Then reply DONE-SLEEP."
+bin/fm-control.sh <id> interrupt
+bin/fm-control.sh <id> exit
+bin/fm-control.sh <id> relaunch --note "Lab relaunch: reply exactly RELAUNCHED and stop."
+```
+
+Observed results:
+
+- The staged launch carried `FM_TASK_WORKER=pi FM_PI_HARNESS=pi '<pi>' --tui-mode regular --model 'claude-bridge/claude-haiku-5-5' --thinking 'low' -e '<state>/<id>.pi-ext.ts'`, and the pane rendered the regular inline TUI with the footer `(claude-bridge) claude-haiku-5-5 • low`.
+- The scratch project carried a project `.agents/skills` directory, so the first launch parked on `Trust project folder?` with the five options recorded under "Launch-prompt backstop signatures"; `fm_busy_classify` read `unknown launch-prompt`, and liveness read `alive` with `#{pane_current_command}` `node` and foreground `comm` `pi`.
+- Enter selected `Trust`, the lab `trust.json` gained exactly that directory, and the worker replied `LAB-READY`; the busy record moved to `state=idle source=pi-ext event=agent-settled` and `state/<id>.turn-ended` was touched.
+- During the sleep the record read `state=busy source=pi-ext event=agent-start`, and the foreground processes were `pi` and the bridge's `claude-agent-sdk-darwin-arm64/claude` binary.
+- `interrupt` printed `interrupt-delivered <id> harness=pi backend=tmux verified=agent-alive cancel=unconfirmed`; the pane showed `Command aborted` and `Error: This operation was aborted`, and the record returned to `state=idle source=pi-ext event=agent-settled`.
+- `exit` printed `stopped <id> harness=pi backend=tmux ...`; Pi printed `To resume this session: pi --session <uuid>`, and liveness read `dead` with the pane back at its shell.
+- `relaunch` printed `relaunched <id> harness=pi from=pi model=claude-bridge/claude-haiku-5-5 effort=low backend=tmux ...`, started a new Pi session file (the tmux backend passes no `--session`, as `relaunch_resume_args` in `bin/fm-spawn.sh` records), resumed work from the unacknowledged inbox record, replied `RELAUNCHED`, and settled idle with a fresh turn-end touch.
+- A second worker spawned the same way into a sibling clone after the lab `trust.json` saved their common parent directory showed no trust dialog, processed its brief directly, and added no entry to `trust.json`.
+
 ## Native Codex through Pi
 
 Verified on 2026-09-08 with Pi 0.85.1 and the installed `pi-codex-native` 0.2.1 adapter.

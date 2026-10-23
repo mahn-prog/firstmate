@@ -1,7 +1,8 @@
 # Pi and Pi-signed
 
 The combined contract is genuine: Pi and the signed wrapper expose the same verified CLI and TUI behavior.
-Verified on 2026-07-27 with Pi and Pi-signed 0.82.0 unless a fact gives another version.
+Verified on 2026-10-22 with Pi 1.1.0 and the pi-claude-bridge 0.9.3 extension unless a fact gives another version.
+Pi-signed was not installed for that run, so its own identity facts below keep their older versions.
 
 ## Operating facts
 
@@ -13,27 +14,43 @@ Verified on 2026-07-27 with Pi and Pi-signed 0.82.0 unless a fact gives another 
 | Interrupt | Single Escape. |
 | Skill invocation | No separate verified form beyond normal command behavior; use natural language when the exact command is uncertain. |
 | Model flag | `--model <model>`; under a home's worker account pin the model must be `<provider>/<id>` and Firstmate also passes `--provider <provider>` (`../../../docs/configuration.md` "Worker account pin"). |
-| Effort flag | `--thinking <low\|medium\|high\|xhigh\|max>`; both identities expose the same levels and completed the same model-qualified max-thinking smoke. |
+| Claude models | Name `claude-bridge/<id>`, for example `claude-bridge/claude-sonnet-5-5`; see "Claude through the bridge" below. |
+| Effort flag | `--thinking <low\|medium\|high\|xhigh\|max>`; Pi 1.1.0 also accepts `off` and `minimal`, which no Firstmate effort level maps to. |
 | Model discovery | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
 
 Native Codex sessions may request `ultra` through the native extension flag described by `../../../bin/fm-spawn.sh`; it is separate from Pi's thinking levels.
 Pi has no permission system, so workers are always autonomous.
-Pi's installed `packages/coding-agent/docs/settings.md` UI and display section documents `regular` as the `tuiMode` default and `fullscreen` as experimental.
-Fullscreen can bury steering messages by rewriting scrollback, so Firstmate avoids it when the installed CLI supports the override.
+Pi 1.1.0 defaults to the fullscreen TUI (`pi --help`: `--tui-mode <mode>  TUI mode: fullscreen (default) or regular`).
+Fullscreen can bury steering messages by rewriting scrollback, so `../../../bin/fm-spawn.sh` passes `--tui-mode regular` whenever the selected executable's `--help` advertises the flag; a verified 1.1.0 worker pane renders the regular inline TUI.
 `../../../bin/fm-spawn.sh --help` owns the executable-pinning and version-safe launch mechanics.
 
-Pi-signed is the signed wrapper identity verified on version 0.82.0.
+Pi-signed is the signed wrapper identity, last verified on version 0.84.4.
 Firstmate records `pi-signed` without normalization and refuses rather than falling back to `pi` when that wrapper is unavailable.
-The observed signed process tree has an exact `pi-signed` wrapper parent with the Pi application as its child, while tmux reports the foreground command as the exact `pi-launcher` name for either selected executable.
-The installed plain `pi` command also execs that signed launcher.
+Where the signed launcher is installed, the process tree has an exact `pi-signed` wrapper parent with the Pi application as its child, tmux reports the foreground command as the exact `pi-launcher` name for either selected executable, and the plain `pi` command execs that launcher too.
+A plain Pi 1.1.0 install without the signed launcher runs `pi` as a Node script: tmux reports `node` while the foreground process `comm` is `pi`, and the shared liveness classifier reads that pane `alive`.
+While a claude-bridge turn runs, the bridge's Claude Code agent binary is a second foreground process beside `pi`.
 The router's Detection section owns how launch markers and ancestry select between the identities.
 
 Keep the instructions as one positional argument.
 Multiple positional arguments become separate queued messages; the spawn template already preserves the one-argument shape.
 
-A project trust dialog can appear on the first Pi run in any not-yet-trusted directory, including a clean worktree.
-Accept it with Enter and verify the instructions begin processing.
-The decision persists per path in `~/.pi/agent/trust.json`, or in the pinned root's `trust.json` under a worker account pin, so later spawns in the same pooled slot under that root skip it.
+A project trust dialog (`Trust project folder?`) appears only when the start directory or an ancestor carries a trust-requiring project resource, such as `.pi/` settings or extensions or a project `.agents/skills` directory, and no decision covers it.
+Pi applies the first match of `--approve`/`--no-approve`, a `project_trust` extension, the closest saved decision for the directory or any ancestor in the agent directory's `trust.json` (`~/.pi/agent/trust.json`, or the pinned root's under a worker account pin), then the `defaultProjectTrust` setting, which defaults to asking.
+A saved decision for a pool root therefore covers every slot beneath it, and such a spawn shows no dialog.
+The dialog lists `Trust` first, then `Trust parent folder (<parent>)`, `Trust (this session only)`, `Do not trust`, and `Do not trust (this session only)`.
+Accept it with Enter, which selects `Trust` and saves that exact directory, and verify the instructions begin processing.
+Firstmate never passes `--approve`.
+
+Pi 1.1.0 also adds `--session-id`, `--fork`, `--offline`, `--no-mcp`, and the `pi auth` subcommand; none is part of a Firstmate launch, and `../../../bin/fm-worker-account-lib.sh` owns the use of `pi auth check`.
+
+## Claude through the bridge
+
+The pi-claude-bridge extension registers the `claude-bridge` provider, which serves Claude models through Claude Code's own agent runtime and login.
+Pi's built-in `anthropic` provider lists the same Claude ids and bills them as direct Anthropic extra usage.
+Pi resolves a `<provider>/<id>` model under that exact provider, but resolves a bare id or a fuzzy alias such as `opus` under its sole authenticated provider for that id or its default provider, so on a host signed in to Anthropic a bare `claude-sonnet-5-5` runs direct Anthropic, never the bridge.
+Dispatch must therefore name `claude-bridge/<id>`, and `../../../bin/fm-spawn.sh` refuses a canonical Pi or Pi-signed launch whose `--model` is a bare Claude-family id.
+`anthropic/<id>` remains a deliberate direct choice.
+A launch with no `--model` uses Pi's own `defaultProvider` and `defaultModel` settings, so it is a bridge launch only when those settings name the bridge.
 
 ## Worker turn-end extension
 

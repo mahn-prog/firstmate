@@ -936,6 +936,37 @@ test_pi_threads_model_and_max_effort() {
   pass "pi receives --model and --thinking max profile flags"
 }
 
+# Pi resolves a bare Claude id or alias under its default provider, which on a
+# host signed in to Anthropic is direct Anthropic rather than the claude-bridge
+# extension, so a canonical Pi launch must name the provider.
+test_pi_refuses_bare_claude_model_ids() {
+  local rec id out harness model
+  for harness in pi pi-signed; do
+    for model in claude-sonnet-5-5 opus; do
+      id="pi-bare-claude-$harness-$model"
+      rec=$(make_spawn_case "$id" "$harness" "$id")
+      read_case_record "$rec"
+      out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+        --harness "$harness" --model "$model" 2>&1)
+      expect_code 1 "$?" "bare Claude id '$model' on $harness should refuse: $out"
+      assert_contains "$out" "claude-bridge/$model" "refusal did not name the bridge form for '$model'"
+      [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused bare Claude id published metadata"
+      [ ! -e "$HOME_DIR/state/$id.busy-gen" ] || fail "refused bare Claude id provisioned lifecycle wiring"
+      [ ! -s "$LAUNCH_LOG" ] || fail "refused bare Claude id launched an agent"
+    done
+  done
+  for model in claude-bridge/claude-sonnet-5-5 anthropic/claude-sonnet-5-5 gpt-5.5; do
+    id="pi-provider-model-$RANDOM"
+    rec=$(make_spawn_case "$id" pi "$id")
+    read_case_record "$rec"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --harness pi --model "$model" 2>&1)
+    expect_code 0 "$?" "pi spawn with '$model' should launch: $out"
+    assert_contains "$(cat "$LAUNCH_LOG")" "--tui-mode regular --model '$model' -e" "pi launch did not carry '$model' unchanged"
+  done
+  pass "canonical Pi launches refuse bare Claude ids before provisioning and keep provider-qualified and non-Claude ids"
+}
+
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   local rec id out status launch
   id=profile-pi-signed-z8b
@@ -1858,6 +1889,7 @@ test_batch_preserves_native_ultra
 test_pi_threads_model_and_max_effort
 test_pi_launch_clears_claude_markers_and_marks_the_task_worker
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
+test_pi_refuses_bare_claude_model_ids
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
