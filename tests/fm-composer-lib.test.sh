@@ -580,6 +580,30 @@ test_matrix_codex_idle_starfield_furniture() {
   pass "matrix: codex 0.154's starfield rows are furniture; typed, mixed, and unanchored rows keep their verdicts"
 }
 
+test_real_pi_1_1_0_herdr_captures() {
+  # Byte-level herdr 0.9.1 `pane read --source visible --format ansi` captures
+  # of Pi 1.1.0 second mates in regular TUI mode, trimmed to the composer and
+  # footer with the home path neutralized. The empty composer is a lone
+  # reverse-video cursor cell between two truecolor rules; the held composer is
+  # a watcher wake an aborted run restored into the editor, with the cursor
+  # cell at its end. Every row ends in the CR the capture carries.
+  local rule idle held footer pi_done pi_working
+  rule=$'\e[0m\e[38;2;151;118;229m────────────────────────────────────────────────────────────────────────────────────\e[0m\r'
+  footer=$'\e[0m\e[38;2;126;136;142m~/firstmate-home (detached)\e[0m\r\n\e[0m\e[38;2;126;136;142m↑200 ↓32k R12M W736k CH99.5% 19.0%/1.0M (auto)                claude-opus-5-5 • high\e[0m'
+  idle=$' Captain, shipshape.                                                                \r\n\r\n'"$rule"$'\n\e[0m\e[7m \e[0m                                                                                   \r\n'"$rule"$'\n'"$footer"
+  held=$' Operation aborted\r\n\r\n'"$rule"$'\nFIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wAM:p2 (paused     \r\n1544875s, awaiting external - declared pause, rechecked on a long cadence not a     \r\nwedge; confirm the wait still holds)                                                \r\n                                                                                    \r\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is    \r\nextension-owned.\e[0m\e[7m \e[0m                                                                   \r\n'"$rule"$'\n'"$footer"
+  pi_done=$(printf 'pi\tdone'); pi_working=$(printf 'pi\tworking')
+  [ "$(fm_composer_classify_screen "$CAPS_STYLED" "$idle")" = need-identity ] \
+    || fail "a real Pi 1.1.0 separator pair should ask herdr for its identity"
+  assert_screen "real idle Pi 1.1.0 composer on herdr" empty "$CAPS_STYLED" "$idle" '' "$pi_done"
+  assert_screen "real Pi 1.1.0 composer holding a restored wake" pending "$CAPS_STYLED" "$held" '' "$pi_done"
+  # The state herdr reports while an interrupted Pi turn is still settling:
+  # the same empty composer is not yet proof.
+  assert_screen "real empty Pi 1.1.0 composer while still working" unknown "$CAPS_STYLED" "$idle" '' "$pi_working"
+  assert_screen "real held Pi 1.1.0 composer while still working" pending "$CAPS_STYLED" "$held" '' "$pi_working"
+  pass "real Pi 1.1.0 herdr captures classify empty, pending, and unknown while settling"
+}
+
 test_matrix_pi_separated_needs_identity() {
   # Real idle pi: a blank row between two solid rules. The blank row alone is
   # exactly what the strict rule refuses; only structure PLUS a live
@@ -979,6 +1003,7 @@ test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
+test_real_pi_1_1_0_herdr_captures
 test_matrix_pi_dollar_status_footer_is_empty
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border
