@@ -70,6 +70,11 @@ verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repea
 #   pane     optional capture-pane override, for an adapter whose busy verdict
 #            is read from the rendered tail.
 #   key-times  every named key with its wall-clock send time.
+#   pi       optional Pi 1.1.0 regular-TUI screen model: `working` (the
+#            `Working...` row above the separator pair) or `idle`. Escape on a
+#            working model starts an abort that keeps rendering `Working...`
+#            for FM_FAKE_PI_SETTLE_READS more captures, standing in for a
+#            backend whose Pi state lags the abort, then settles idle.
 #   devin    optional Devin screen model, which capture-pane renders as the
 #            rows devin 3000.11.1 draws: `running`, `armed`, `cancelled`,
 #            `idle`, `primed`, or `picker`. Escape moves running->armed (the
@@ -137,6 +142,10 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       printf '%s %s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" "$payload" >> "$D/key-times"
+      if [ "$payload" = Escape ] && [ "$(cat "$D/pi" 2>/dev/null)" = working ]; then
+        printf aborting > "$D/pi"
+        printf '%s' "${FM_FAKE_PI_SETTLE_READS:-0}" > "$D/pi-settle"
+      fi
       if [ "$payload" = Escape ] && [ -f "$D/devin" ]; then
         case "$(cat "$D/devin")" in
           running) printf armed > "$D/devin" ;;
@@ -165,6 +174,8 @@ case "${1:-}" in
           # A modelled Devin screen parks the cursor on its composer row.
           if [ -f "$D/devin" ]; then
             devin_screen "$(cat "$D/devin")" | awk '/^❭ /{ print NR - 1; exit }'
+          elif [ -f "$D/pi" ]; then
+            printf '2\n'
           else
             printf '1\n'
           fi
@@ -175,6 +186,15 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
+    if [ -f "$D/pi" ]; then
+      if [ "$(cat "$D/pi")" = aborting ]; then
+        left=$(cat "$D/pi-settle")
+        if [ "$left" -le 0 ]; then printf idle > "$D/pi"; else printf '%s' "$((left - 1))" > "$D/pi-settle"; fi
+      fi
+      if [ "$(cat "$D/pi")" = idle ]; then printf ' done\n'; else printf ' ⠋ Working...\n'; fi
+      printf '────────────────────\n \n────────────────────\n~/wt (task-t1)\n'
+      exit 0
+    fi
     if [ -f "$D/devin" ]; then devin_screen "$(cat "$D/devin")"; elif [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
     exit 0 ;;
   list-windows)
@@ -243,12 +263,13 @@ add_task() {
 run_control() {
   local dir=$1; shift
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.05 \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.05 FM_CONTROL_COMPOSER_SETTLE_WAIT=0.05 \
     FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
     FM_FAKE_DEVIN_PICKER_STUCK="${FM_FAKE_DEVIN_PICKER_STUCK:-}" \
+    FM_FAKE_PI_SETTLE_READS="${FM_FAKE_PI_SETTLE_READS:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -988,6 +1009,41 @@ test_agent_that_does_not_stop_fails_closed() {
   pass "fm-control exit: a stubborn agent reports delivered input and an unconfirmed exit"
 }
 
+# A Pi turn interrupted by exit keeps reporting working until its run settles:
+# on herdr, Pi's state arrives from its end-of-run extension handlers, which run
+# after Firstmate's own. Exit must give that settle its bounded wait rather than
+# read the composer once and refuse an idle agent as unknown.
+test_pi_exit_waits_for_the_interrupted_turn_to_settle() {
+  local dir out rc gen
+  dir=$(new_case pi-settle)
+  add_task "$dir" t1 pi
+  alive_as "$dir" pi
+  printf working > "$dir/fake/pi"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_PI_SETTLE_READS=3 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit should wait out a Pi turn still settling after its interrupt"$'\n'"$out"
+  assert_not_contains "$out" "not proven empty" "a settling Pi composer must not be refused as unknown"
+  [ "$(keys_sent "$dir")" = Escape ] || fail "the busy Pi turn should be interrupted once, got: $(keys_sent "$dir")"
+  [ "$(literals "$dir")" = /quit ] || fail "Pi's exit command should be typed once the composer settles empty, got: $(literals "$dir")"
+  pass "fm-control exit: a Pi composer read waits for the interrupted turn to settle"
+}
+
+test_pi_exit_refuses_a_composer_that_never_settles() {
+  local dir out rc gen
+  dir=$(new_case pi-nosettle)
+  add_task "$dir" t1 pi
+  alive_as "$dir" pi
+  printf working > "$dir/fake/pi"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_PI_SETTLE_READS=100000 run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "exit must still refuse a Pi composer that never proves empty"$'\n'"$out"
+  assert_contains "$out" "composer state is 'unknown', not proven empty" "the refusal keeps naming the unproven composer"
+  [ -z "$(literals "$dir")" ] || fail "nothing may be typed into an unsettled Pi composer, got: $(literals "$dir")"
+  pass "fm-control exit: a Pi composer that never settles is still refused untouched"
+}
+
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed() {
   local dir out rc
   dir=$(new_case nosettle)
@@ -1137,6 +1193,8 @@ test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait
 test_exit_accepts_agent_stopped_by_busy_interrupt
 test_agent_that_does_not_stop_fails_closed
+test_pi_exit_waits_for_the_interrupted_turn_to_settle
+test_pi_exit_refuses_a_composer_that_never_settles
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
