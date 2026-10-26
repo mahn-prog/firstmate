@@ -118,9 +118,9 @@ type SessionGeneration = {
   // for restored-wake recovery (recoverRestoredWakes): only text that is byte-for-byte one of these may
   // be taken back out of the editor.
   inFlightWakeTexts: string[];
-  // A verified successor's failure close that arrived while the pipeline was
-  // still delivering the wake it was started for; its bounded retry runs once
-  // that delivery settles instead of being skipped by the single-flight guard.
+  // A successor failure (including a late retirement close) received while
+  // delivering a wake; retry after delivery instead of losing it to the
+  // single-flight guard.
   deferredClose: { message: string; predecessorArmPid: string } | null;
 };
 
@@ -158,14 +158,18 @@ const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(exte
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
 const retryLimit = positiveInteger("FM_WATCH_REARM_RETRY_LIMIT", 5);
-// 35s on Windows so the budget stays above arm's MSYS confirm default (30s in
-// bin/fm-watch-arm.sh): a slow but successful Git Bash cold start must not be
-// SIGTERMed mid-confirmation. Conditioned on win32 so other platforms keep 12s.
+// bin/fm-watch-arm.sh allows a live cold start the larger of confirmation
+// and watcher grace. The bridge must not kill that child before its own
+// startup budget expires; leave headroom for shell startup and final output.
 const armReadyTimeoutMs = positiveInteger(
   "FM_PI_ARM_READY_TIMEOUT_MS",
-  process.platform === "win32" ? 35000 : 12000,
+  Math.max(
+    positiveInteger("FM_ARM_CONFIRM_TIMEOUT", process.platform === "win32" ? 30 : 10),
+    positiveInteger("FM_GUARD_GRACE", 300),
+  ) * 1000 + 5000,
 );
-const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
+// TERM waits for watcher cleanup, which can take seconds on a loaded host.
+const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 15000);
 const repairOnlyHint = "call fm_watch_arm_pi again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - Pi session is shutting down";
 
@@ -206,9 +210,12 @@ const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
 const retiringGenerations = new Set<SessionGeneration>();
-// Children the extension itself asked to exit; their close is not a failure
-// of the successor and never earns a deferred retry.
+// Children the extension asked to exit. An expected close awaited by the
+// restoration loop does not earn an additional deferred retry.
 const armRetired = new WeakSet<ChildProcess>();
+// A timed-out retirement still owns its child until close. If that close
+// races wake delivery, retain its retry rather than leaving the home unarmed.
+const armRetirementTimedOut = new WeakSet<ChildProcess>();
 const armRecovery = new WeakMap<ChildProcess, { generation: string; watcherPid: string }>();
 const armPendingActionable = new WeakMap<ChildProcess, PendingActionableClose>();
 
@@ -957,7 +964,10 @@ export default function (pi: ExtensionAPI) {
     const closed = armClose.get(armChild);
     if (!closed) return false;
     return new Promise((resolveRetired) => {
-      const timer = setTimeout(() => resolveRetired(false), armRetireTimeoutMs);
+      const timer = setTimeout(() => {
+        armRetirementTimedOut.add(armChild);
+        resolveRetired(false);
+      }, armRetireTimeoutMs);
       timer.unref();
       void closed.then(() => {
         clearTimeout(timer);
@@ -1123,11 +1133,10 @@ export default function (pi: ExtensionAPI) {
       }
       if (!generationIsLive(owner)) return;
       if (owner.restoring) {
-        // The pipeline is still delivering the wake this successor was
-        // started for. A verified successor that failed on its own keeps its
-        // bounded retry for the end of that delivery; an unready child closing
-        // here was retired by the restoration itself.
-        if (verified && !armRetired.has(armChild)) {
+        // Expected closes awaited by restoration need no extra retry. A late
+        // retirement close, like a verified successor failing on its own,
+        // must retain its bounded retry until wake delivery settles.
+        if (armRetirementTimedOut.has(armChild) || (verified && !armRetired.has(armChild))) {
           owner.deferredClose = { message: classification.message, predecessorArmPid: predecessor };
         }
         return;

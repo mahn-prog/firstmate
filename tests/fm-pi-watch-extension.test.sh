@@ -450,7 +450,7 @@ printf 'watcher: started pid=%s (beacon fresh) recovery-generation=before-close-
 if [ "$count" -eq 1 ]; then
   printf 'actionable-emitted\n' >> "$FM_ARM_LOG"
   printf 'signal: actionable output before predecessor close\n'
-  sleep 0.5
+  while [ ! -e "$FM_STOP_FILE.predecessor" ]; do sleep 0.02; done
   printf 'predecessor-closed\n' >> "$FM_ARM_LOG"
   exit 0
 fi
@@ -485,7 +485,17 @@ writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 await tool.execute("initial-arm", {}, undefined, undefined, {});
-await new Promise((resolve) => setTimeout(resolve, 1200));
+async function waitFor(predicate, message) {
+  for (let i = 0; i < 1500; i += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  failNow(message);
+}
+await waitFor(() => existsSync(process.env.FM_ARM_LOG) && readFileSync(process.env.FM_ARM_LOG, "utf8").includes("actionable-emitted"), "predecessor did not emit actionable output");
+if (prompts.length !== 0) failNow("delivered before predecessor was released");
+writeFileSync(`${process.env.FM_STOP_FILE}.predecessor`, "release\n");
+await waitFor(() => prompts.length > 0, "wake was not delivered after predecessor close");
 const rows = existsSync(process.env.FM_ARM_LOG)
   ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n")
   : [];
@@ -1728,6 +1738,93 @@ EOF
   pass "Pi hung successor falls back to one typed actionable wake"
 }
 
+# Advance only bridge deadlines, not process startup, so this covers a cold
+# start beyond the former 12s limit without a wall-clock sleep or host-load race.
+test_pi_slow_successor_inherits_watcher_startup_grace() {
+  local repo home plugin log release out status
+  repo="$TMP_ROOT/pi-slow-successor-root"
+  home="$TMP_ROOT/pi-slow-successor-home"
+  log="$TMP_ROOT/pi-slow-successor.log"
+  release="$TMP_ROOT/pi-slow-successor.release"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+count=$(grep -c '^arm=' "$FM_ARM_LOG")
+trap 'exit 0' TERM INT
+if [ "$count" -eq 1 ]; then
+  printf 'watcher: started pid=%s (beacon fresh)\nsignal: slow successor\n' "$$"
+  exit 0
+fi
+printf 'starting\n' >> "$FM_ARM_LOG"
+while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 0.02; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_GUARD_GRACE=20 FM_ARM_CONFIRM_TIMEOUT=1 node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
+const deadlines = new Map();
+globalThis.setTimeout = (callback, ms, ...args) => {
+  if (ms < 1000) return nativeSetTimeout(callback, ms, ...args);
+  const timer = nativeSetTimeout(() => {}, 3600000);
+  deadlines.set(timer, { ms, fire: () => callback(...args) });
+  return timer;
+};
+globalThis.clearTimeout = (timer) => {
+  deadlines.delete(timer);
+  nativeClearTimeout(timer);
+};
+async function waitFor(predicate, message) {
+  for (let i = 0; i < 1500; i += 1) {
+    if (predicate()) return;
+    await delay(10);
+  }
+  throw new Error(message);
+}
+const rows = () => existsSync(process.env.FM_ARM_LOG) ? readFileSync(process.env.FM_ARM_LOG, "utf8") : "";
+let tool;
+const prompts = [];
+const handlers = new Map();
+const pi = {
+  on: (event, handler) => handlers.set(event, handler),
+  registerCommand() {},
+  registerTool(candidate) { if (candidate.name === "fm_watch_arm_pi") tool = candidate; },
+  async sendUserMessage(message) { prompts.push(message); },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await tool.execute("slow-successor", {}, undefined, undefined, {});
+await waitFor(() => rows().includes("starting"), "successor did not begin startup");
+// Thirteen seconds elapse while the successor is alive but has not beaten.
+for (const [timer, deadline] of deadlines) {
+  if (deadline.ms > 13000) continue;
+  clearTimeout(timer);
+  deadline.fire();
+}
+await Promise.resolve();
+await Promise.resolve();
+writeFileSync(process.env.FM_RELEASE_FILE, "release\n");
+await waitFor(() => prompts.length > 0, "slow healthy successor did not deliver wake");
+if (prompts.length !== 1 || prompts[0].includes("FAILED")) throw new Error(`slow successor rejected: ${prompts.join(" | ")}`);
+if ((rows().match(/^arm=/gm) || []).length !== 2) throw new Error(`healthy startup was killed and retried: ${rows()}`);
+await handlers.get("session_shutdown")({ reason: "quit" });
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi must accept a live successor within watcher startup grace"
+  [ -z "$out" ] || fail "Pi slow-successor test printed output: $out"
+  pass "Pi slow successor inherits watcher startup grace"
+}
+
 test_pi_unretired_successor_falls_back_without_retry() {
   local repo home plugin log release out status
   repo="$TMP_ROOT/pi-unretired-successor-root"
@@ -1801,7 +1898,7 @@ EOF
 
 test_pi_late_unretired_close_resumes_supervision() {
   local kind repo home plugin log ready retired release stop out status
-  for kind in actionable non-actionable; do
+  for kind in actionable non-actionable delivery-pending; do
     repo="$TMP_ROOT/pi-late-$kind-root"
     home="$TMP_ROOT/pi-late-$kind-home"
     log="$TMP_ROOT/pi-late-$kind.log"
@@ -1837,6 +1934,22 @@ SH
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+// Observe real process close independently of the extension callback.
+const cp = (await import("node:child_process")).default;
+const { syncBuiltinESMExports } = await import("node:module");
+const originalSpawn = cp.spawn;
+let closedArms = 0;
+let releaseDelivery;
+const delivery = new Promise((resolve) => { releaseDelivery = resolve; });
+cp.spawn = (...args) => {
+  const child = originalSpawn(...args);
+  child.on("close", () => {
+    closedArms += 1;
+    if (closedArms === 2) releaseDelivery();
+  });
+  return child;
+};
+syncBuiltinESMExports();
 let tool = null;
 const prompts = [];
 const handlers = new Map();
@@ -1851,6 +1964,7 @@ const pi = {
   // Nothing here consumes the follow-up: continuity must not depend on it.
   sendUserMessage: async (message) => {
     prompts.push(message);
+    if (process.env.FM_LATE_KIND === "delivery-pending") await delivery;
   },
 };
 const rows = () => existsSync(process.env.FM_ARM_LOG)
@@ -4552,6 +4666,7 @@ test_pi_watcher_failure_never_offered_to_branch
 test_pi_away_record_collapses_eligibility_and_keeps_vetoes_on_main
 test_pi_handling_delivery_failure_is_typed_once
 test_pi_hung_successor_falls_back_to_typed_wake
+test_pi_slow_successor_inherits_watcher_startup_grace
 test_pi_unretired_successor_falls_back_without_retry
 test_pi_late_unretired_close_resumes_supervision
 test_pi_empty_close_retries_instead_of_disappearing
