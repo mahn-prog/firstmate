@@ -179,6 +179,9 @@ case " $* " in
   *" api repos/"*"/commits/"*"/statuses?per_page=100 "*)
     printf '%s\n' '[[]]'
     ;;
+  *" api user "*)
+    printf '%s\n' '{"login":"author"}'
+    ;;
   *" api --paginate repos/"*"/rules/branches/"*merge_queue*)
     ;;
   *" api --paginate repos/"*"/rules/branches/"*)
