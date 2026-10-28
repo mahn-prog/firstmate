@@ -228,10 +228,22 @@ case "${1:-} ${2:-}" in
     cat "$FM_TEST_GH_OUTCOME"
     exit 0
     ;;
+  "api user")
+    # The authenticated login, which is the default allowed pull request author.
+    [ ! -f "${FM_TEST_GH_USER_FAIL:-}" ] || exit 1
+    printf '{"login":"%s"}\n' "$(cat "${FM_TEST_GH_USER:-/dev/null}" 2>/dev/null || echo mahn-prog)"
+    exit 0
+    ;;
   api\ *)
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *" repos/"*"/pulls/"*)
+        [ ! -f "${FM_TEST_GH_AUTHOR_FAIL:-}" ] || exit 1
+        printf '{"number":1,"user":{"login":"%s"}}\n' \
+          "$(cat "${FM_TEST_GH_AUTHOR:-/dev/null}" 2>/dev/null || echo mahn-prog)"
+        exit 0
+        ;;
       *" repos/"*"/commits/"*"/check-runs"*)
         case "$*" in
           *"/commits/$(cat "$FM_TEST_GH_HEAD")/check-runs"*) ;;
@@ -450,6 +462,10 @@ run_pr_merge() {
   FM_TEST_GH_VIEW_JSON="$case_dir/github-view.json" \
   FM_TEST_GH_HEAD="$case_dir/github-head" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
+  FM_TEST_GH_USER="$case_dir/github-user" \
+  FM_TEST_GH_USER_FAIL="$case_dir/github-user-fail" \
+  FM_TEST_GH_AUTHOR="$case_dir/github-author" \
+  FM_TEST_GH_AUTHOR_FAIL="$case_dir/github-author-fail" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
   FM_TEST_GH_GRAPHQL_FAIL="$case_dir/github-graphql-fail" \
@@ -2217,6 +2233,150 @@ test_secondmate_without_parent_binding_is_loud() {
   pass "a secondmate home that cannot report upward says so instead of merging in silence"
 }
 
+# A GitHub case whose pull request was opened by the given login. The mocks
+# report the authenticated gh user as mahn-prog unless a case overrides it.
+# Args: name author
+make_author_case() {
+  local name=$1 author=$2 case_dir
+  case_dir=$(make_case "$name")
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+  : > "$case_dir/gh-axi.log"
+  printf '%s\n' "$author" > "$case_dir/github-author"
+  printf '%s\n' "$case_dir"
+}
+
+# Run one merge of the author case's pull request and leave rc and the output
+# files in the case directory. Args: case_dir [fm-pr-merge args after the URL]
+run_author_merge() {
+  local case_dir=$1
+  shift
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/91 "$@" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  RC=$?
+  set -e
+}
+
+test_author_outside_the_allowed_set_is_refused() {
+  local case_dir
+  case_dir=$(make_author_case author-stranger alex-team)
+  run_author_merge "$case_dir"
+  expect_code 1 "$RC" "author-stranger: a PR by someone else must be refused"
+  assert_grep 'author alex-team' "$case_dir/stderr" \
+    "author-stranger: the refusal did not name the author"
+  assert_grep 'pass --attended-override only for an explicit captain instruction' "$case_dir/stderr" \
+    "author-stranger: the refusal did not name the attended override"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-stranger: gh pr merge ran for a PR by someone else"
+  pass "fm-pr-merge refuses a GitHub PR whose author is not the captain's login"
+}
+
+test_captain_and_dependabot_authors_merge() {
+  local case_dir
+  case_dir=$(make_author_case author-captain mahn-prog)
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-captain: the authenticated user's own PR must merge"
+  assert_logged_gh_merge "$case_dir" 91 example/repo --squash
+
+  case_dir=$(make_author_case author-case-insensitive MAHN-Prog)
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-case-insensitive: GitHub logins compare without case"
+
+  case_dir=$(make_author_case author-dependabot 'dependabot[bot]')
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-dependabot: dependabot's PR must merge"
+  assert_logged_gh_merge "$case_dir" 91 example/repo --squash
+  pass "fm-pr-merge merges the authenticated user's PR and dependabot's"
+}
+
+test_default_captain_login_is_the_authenticated_gh_user() {
+  local case_dir
+  case_dir=$(make_author_case author-default-user other-captain)
+  printf '%s\n' other-captain > "$case_dir/github-user"
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-default-user: the default allowed login must follow the authenticated user"
+
+  case_dir=$(make_author_case author-default-user-mismatch mahn-prog)
+  printf '%s\n' other-captain > "$case_dir/github-user"
+  run_author_merge "$case_dir"
+  expect_code 1 "$RC" "author-default-user-mismatch: a login that is not the authenticated user must be refused"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-default-user-mismatch: gh pr merge ran"
+  pass "fm-pr-merge defaults the allowed author to the authenticated gh user"
+}
+
+test_configured_authors_replace_the_default() {
+  local case_dir
+  case_dir=$(make_author_case author-configured alex-team)
+  printf '%s\n' '# captain logins' '' 'mahn-prog' '  alex-team  ' > "$case_dir/home/config/pr-merge-authors"
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-configured: a login listed in config/pr-merge-authors must merge"
+
+  case_dir=$(make_author_case author-configured-excludes-user mahn-prog)
+  printf '%s\n' 'someone-else' > "$case_dir/home/config/pr-merge-authors"
+  run_author_merge "$case_dir"
+  expect_code 1 "$RC" "author-configured-excludes-user: a configured list replaces the authenticated-user default"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-configured-excludes-user: gh pr merge ran"
+
+  case_dir=$(make_author_case author-configured-dependabot 'dependabot[bot]')
+  printf '%s\n' 'someone-else' > "$case_dir/home/config/pr-merge-authors"
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-configured-dependabot: dependabot stays allowed whatever the list says"
+  pass "fm-pr-merge reads the allowed authors from config/pr-merge-authors"
+}
+
+test_attended_override_merges_someone_elses_pr() {
+  local case_dir
+  case_dir=$(make_author_case author-override alex-team)
+  run_author_merge "$case_dir" --attended-override
+  expect_code 0 "$RC" "author-override: --attended-override must allow another author's PR"
+  assert_logged_gh_merge "$case_dir" 91 example/repo --squash
+  pass "fm-pr-merge --attended-override merges a PR by another author"
+}
+
+test_author_override_is_refused_while_away() {
+  local case_dir
+  case_dir=$(make_author_case author-override-away alex-team)
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  run_author_merge "$case_dir" --attended-override
+  expect_code 1 "$RC" "author-override-away: another author's PR must not merge under away authority"
+  assert_grep 'author guard is attended-only' "$case_dir/stderr" \
+    "author-override-away: the refusal did not name attended-only"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-override-away: gh pr merge ran"
+  pass "fm-pr-merge refuses another author's PR while away even with the override"
+}
+
+test_unreadable_author_or_login_refuses() {
+  local case_dir
+  case_dir=$(make_author_case author-unreadable mahn-prog)
+  : > "$case_dir/github-author-fail"
+  run_author_merge "$case_dir"
+  expect_code 1 "$RC" "author-unreadable: an unreadable author must refuse"
+  assert_grep 'could not read the pull request author' "$case_dir/stderr" \
+    "author-unreadable: the refusal did not say the author was unreadable"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-unreadable: gh pr merge ran"
+
+  case_dir=$(make_author_case author-user-unreadable mahn-prog)
+  : > "$case_dir/github-user-fail"
+  run_author_merge "$case_dir"
+  expect_code 1 "$RC" "author-user-unreadable: an unreadable authenticated login must refuse"
+  assert_grep 'could not read the authenticated GitHub login' "$case_dir/stderr" \
+    "author-user-unreadable: the refusal did not say the login was unreadable"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "author-user-unreadable: gh pr merge ran"
+
+  case_dir=$(make_author_case author-user-unneeded mahn-prog)
+  : > "$case_dir/github-user-fail"
+  printf '%s\n' mahn-prog > "$case_dir/home/config/pr-merge-authors"
+  run_author_merge "$case_dir"
+  expect_code 0 "$RC" "author-user-unneeded: a configured list must not need the authenticated login"
+  pass "fm-pr-merge refuses when the author or the default login cannot be read"
+}
+
 test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
@@ -3718,3 +3878,11 @@ test_allow_missing_follows_the_allow_red_rules
 test_required_producer_identity
 test_app_bound_required_status_context_matches_by_name
 test_required_partial_reads_report_all_failures
+
+test_author_outside_the_allowed_set_is_refused
+test_captain_and_dependabot_authors_merge
+test_default_captain_login_is_the_authenticated_gh_user
+test_configured_authors_replace_the_default
+test_attended_override_merges_someone_elses_pr
+test_author_override_is_refused_while_away
+test_unreadable_author_or_login_refuses

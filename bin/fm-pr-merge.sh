@@ -91,6 +91,18 @@
 # recorded value stale. Reading that state needs glab and jq, and either one
 # absent stops the merge before any state is recorded.
 #
+# A GitHub merge is also refused unless the pull request's author, read live
+# from the forge at merge time, is one this home merges for: a login listed in
+# config/pr-merge-authors (one per line, # comments and blank lines ignored,
+# under FM_CONFIG_OVERRIDE or $FM_HOME/config), or the authenticated gh login
+# when that file lists none, or dependabot[bot], which is always allowed. Logins
+# compare without regard to case. This keeps a mis-bound task from merging a
+# teammate's pull request with the captain's identity. An author, a login, or a
+# config file that cannot be read refuses rather than passing. An attended
+# --attended-override waives the guard for one merge and says so; while the
+# away-posture record exists it cannot, exactly like --allow-red. The guard does
+# not apply on GitLab.
+#
 # Before either forge merge, the task's existing per-task control lock
 # serializes the captain-hold check through the forge command. A still-held or
 # unreadable row refuses before that command, so a captain approval must be
@@ -121,9 +133,9 @@
 # (--admin), and branch
 # deletion (--delete-branch, -d and short-flag clusters, and GitLab's
 # --remove-source-branch) are refused by default; --attended-override, parsed
-# before the optional -- separator, re-enables those forge flags for an
-# explicit captain instruction and never skips the live green check, the
-# away-record read, or a captain hold.
+# before the optional -- separator, re-enables those forge flags and waives the
+# author guard for an explicit captain instruction and never skips the live
+# green check, the away-record read, or a captain hold.
 #
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
 #
@@ -704,12 +716,56 @@ github_required_checks_missing() {
   ' 2>/dev/null || return 1
 }
 
+# Lowercase a GitHub login, which GitHub compares without regard to case.
+github_login_fold() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Echoes why the pull request's author is not one this home merges for, or
+# nothing when it is. The allowed logins are the entries of config/pr-merge-authors
+# (one per line, # comments and blank lines ignored) under the effective config
+# directory, or the authenticated gh login when that file lists none, plus
+# dependabot[bot] always. Anything unreadable is a problem, never a pass.
+github_author_problem() {
+  local config author allowed='' entry login have_list=false
+  config="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/pr-merge-authors"
+  if ! author=$(gh api "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER" 2>/dev/null \
+    | jq -er '.user.login | select(type == "string" and length > 0)' 2>/dev/null); then
+    echo "could not read the pull request author"
+    return 0
+  fi
+  [ "$(github_login_fold "$author")" != 'dependabot[bot]' ] || return 0
+  if [ -e "$config" ] || [ -L "$config" ]; then
+    if [ ! -f "$config" ] || [ ! -r "$config" ]; then
+      echo "could not read the allowed merge authors from $config"
+      return 0
+    fi
+    while IFS= read -r entry || [ -n "$entry" ]; do
+      entry=$(printf '%s' "${entry%%#*}" | tr -d '[:space:]')
+      [ -n "$entry" ] || continue
+      have_list=true
+      allowed="${allowed:+$allowed, }$entry"
+      [ "$(github_login_fold "$entry")" != "$(github_login_fold "$author")" ] || return 0
+    done < "$config"
+  fi
+  if [ "$have_list" = false ]; then
+    if ! login=$(gh api user 2>/dev/null \
+      | jq -er '.login | select(type == "string" and length > 0)' 2>/dev/null); then
+      echo "could not read the authenticated GitHub login, the default allowed merge author; list the allowed logins in config/pr-merge-authors instead"
+      return 0
+    fi
+    [ "$(github_login_fold "$login")" != "$(github_login_fold "$author")" ] || return 0
+    allowed=$login
+  fi
+  echo "pull request author $author is not an allowed merge author ($allowed, dependabot[bot])"
+}
+
 # Pre-merge conditions from a live PR view, base requirements, and head producers.
 # Sets FM_PR_MERGE_HEAD to the verified head on success.
 github_verify_mergeable() {
   local json fields line red name covered missing unreported producers runs
   local total=0 named=0 refusals=''
-  local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  local state='' draft='' mergeable='' merge_state='' live_head='' base='' author_problem=''
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -768,6 +824,19 @@ FIELDS
   [ "$draft" = false ] \
     || refusals="$refusals  - the pull request is a draft
 "
+
+  author_problem=$(github_author_problem)
+  if [ -n "$author_problem" ]; then
+    if [ "$ATTENDED_OVERRIDE" != true ]; then
+      refusals="$refusals  - $author_problem; pass --attended-override only for an explicit captain instruction
+"
+    elif [ "$FM_PR_AWAY_POSTURE" = true ]; then
+      refusals="$refusals  - $author_problem, and the author guard is attended-only: --attended-override cannot waive it while the away-posture record exists
+"
+    else
+      printf 'note: --attended-override waives the author guard for %s: %s\n' "$URL" "$author_problem" >&2
+    fi
+  fi
   [ "$mergeable" = MERGEABLE ] \
     || refusals="$refusals  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "
