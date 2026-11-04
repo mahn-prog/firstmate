@@ -983,6 +983,61 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
+test_duplicate_slot_records_follow_the_claim() {
+  local dir id=stale-task other=current-task first second claim worker
+  # Either teardown order must work after a refused cleanup leaves the old
+  # record behind and a later allocation claims the same slot.
+  for first in "$id" "$other"; do
+    dir=$(make_case "slot-two-records-$first")
+    mark_case_as_treehouse_pool "$dir"
+    for second in "$id" "$other"; do
+      fm_write_meta "$dir/home/state/$second.meta" \
+        "window=firstmate:fm-$second" "endpoint_task_id=$second" \
+        "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    done
+    claim_pool_slot "$dir" "$other"
+    if [ "$first" = "$id" ]; then
+      ( cd "$dir/worktree" && exec sleep 120 ) &
+      worker=$!
+    fi
+    run_case "$dir" "$first" > "$dir/stdout" 2> "$dir/stderr" \
+      || fail "two records: teardown of $first refused: $(cat "$dir/stderr")"
+    if [ "$first" = "$id" ]; then
+      assert_reassigned_slot_left_alone "$dir" "$id" "$other" "two records"
+      assert_present "$dir/worktree/sentinel" "stale record touched the current slot"
+      kill -0 "$worker" 2>/dev/null || fail "stale record killed the current worker"
+      kill "$worker" 2>/dev/null || true
+      wait "$worker" 2>/dev/null || true
+      second=$other
+    else
+      grep -Fq 'treehouse <return>' "$dir/runtime.log" \
+        || fail "current owner did not return its slot"
+      assert_present "$dir/home/state/$id.meta" "current owner removed the stale record"
+      second=$id
+    fi
+    run_case "$dir" "$second" > "$dir/stdout" 2> "$dir/stderr" \
+      || fail "two records: remaining teardown refused: $(cat "$dir/stderr")"
+    assert_absent "$dir/home/state/$id.meta" "stale record remains"
+    assert_absent "$dir/home/state/$other.meta" "current record remains"
+  done
+
+  # Without readable positive ownership, duplicate records must still refuse.
+  for claim in absent unreadable; do
+    dir=$(make_case "slot-two-records-$claim")
+    mark_case_as_treehouse_pool "$dir"
+    for second in "$id" "$other"; do
+      fm_write_meta "$dir/home/state/$second.meta" \
+        "window=firstmate:fm-$second" "endpoint_task_id=$second" \
+        "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    done
+    [ "$claim" != unreadable ] || printf 'not-a-claim\n' > "$dir/pool/1/.fm-slot-owner"
+    assert_refused_without_mutation "$dir" "$id" "duplicate records, $claim claim"
+    assert_refused_without_mutation "$dir" "$other" "duplicate records, $claim claim"
+    assert_contains "$(cat "$dir/stderr")" 'also task' "record collision refusal changed"
+  done
+  pass "fm-teardown: readable slot claims settle duplicate records in either cleanup order"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1383,6 +1438,7 @@ test_already_gone_endpoint_still_completes_without_a_refusal() {
   pass "fm-teardown: an already-exited endpoint, and a server that is already gone, still complete cleanup silently"
 }
 
+test_duplicate_slot_records_follow_the_claim
 test_invalid_endpoint_records_refuse_before_mutation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
