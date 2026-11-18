@@ -27,6 +27,15 @@ exit 126
 SH
 chmod +x "$SANDBOX_BIN/ps"
 
+# No ps-free identity provider either (bin/fm-procinfo.py needs python3), so a
+# live process's identity cannot be read at all.
+NOPROVIDER_BIN=$(fm_fakebin "$TMP_ROOT/noprovider")
+cat > "$NOPROVIDER_BIN/python3" <<'SH'
+#!/bin/sh
+exit 1
+SH
+chmod +x "$NOPROVIDER_BIN/python3"
+
 LIVE_PIDS=()
 cleanup_live() {
   local pid
@@ -190,15 +199,19 @@ have_harness() {  # <case name>: true, or reports the case skipped
 
 # Run <script> inside a codex-shaped harness process, whose pid the script sees
 # as $PPID. <mode> sandbox shadows ps with the failing one and makes kill -0
-# refuse in every bash below the harness, as the sandbox's EPERM does; host
+# refuse in every bash below the harness, as the sandbox's EPERM does;
+# sandbox-noprovider also takes away the ps-free identity provider; host
 # leaves both alone. Extra arguments reach the script as $1...
 in_harness() {  # <mode> <script> [<arg>...]
   local mode=$1 script=$2 path=$PATH prelude=''
   shift 2
-  if [ "$mode" = sandbox ]; then
-    path="$SANDBOX_BIN:$PATH"
-    prelude='kill() { if [ "${1:-}" = -0 ]; then return 1; fi; builtin kill "$@"; }; export -f kill;'
-  fi
+  case "$mode" in
+    sandbox|sandbox-noprovider)
+      path="$SANDBOX_BIN:$PATH"
+      [ "$mode" = sandbox ] || path="$NOPROVIDER_BIN:$path"
+      prelude='kill() { if [ "${1:-}" = -0 ]; then return 1; fi; builtin kill "$@"; }; export -f kill;'
+      ;;
+  esac
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CODEX_THREAD_ID \
     PATH="$path" ROOT="$ROOT" "$HARNESS" -c "$prelude $script" in-harness "$@"
 }
@@ -300,54 +313,28 @@ test_watcher_identity_crosses_the_sandbox() {
   pass "watcher: identity recorded on either side of the sandbox passes the health check on the other"
 }
 
-# Without ps the kernel record has no argv or executable path, so a live holder
-# whose command name is not harness-shaped could still be a harness that only
-# argv identifies (a version-named Claude Code binary, a script under node).
-# Inside the sandbox such a lock is refused rather than taken; outside it, ps
-# proves the holder is no harness and the lock is stale, exactly as before.
+# Without ps, the session lock reads a holder's identity through the ps-free
+# provider (bin/fm-procinfo.py), which also reads argv. A live holder that
+# provider identifies as no harness is stale inside the sandbox as it is outside
+# it; a live holder whose identity cannot be read at all keeps its lock, because
+# it could be a harness that only argv identifies.
 test_unrecognizable_live_holder_is_refused_in_the_sandbox() {
   have_harness "session-lock: unrecognizable holder" || return 0
   local mode state out rc
   start_live
-  for mode in sandbox host; do
+  for mode in sandbox-noprovider sandbox host; do
     state="$TMP_ROOT/unknown-holder-$mode/state"
     mkdir -p "$state"
     printf '%s\n' "$LIVE_PID" > "$state/.lock"
     out=$(in_harness "$mode" 'FM_STATE_OVERRIDE="$1" bash "$ROOT/bin/fm-lock.sh"' "$state" 2>&1) && rc=0 || rc=$?
     case "$mode:$rc" in
-      sandbox:0) fail "sandbox: a live holder it could not identify lost its lock: $out" ;;
-      host:0) ;;
-      host:*) fail "host: a live non-harness holder's stale lock was not taken: $out" ;;
+      sandbox-noprovider:0) fail "sandbox: a live holder it could not identify lost its lock: $out" ;;
+      sandbox-noprovider:*) ;;
+      *:0) ;;
+      *) fail "$mode: a live non-harness holder's stale lock was not taken: $out" ;;
     esac
   done
-  pass "session-lock: an unidentifiable live holder is refused inside the sandbox and stale outside it"
-}
-
-# A live pid that is no recognizable harness keeps its lock inside the sandbox
-# only while it could be the process that wrote the lock: one that started in a
-# later second than the lock file was last written is a reused pid, and the
-# lock is taken. One that started in the same second still refuses.
-test_holder_started_after_the_lock_was_written_is_stale_in_the_sandbox() {
-  have_harness "session-lock: holder started after the lock" || return 0
-  local state out start
-  start_live
-  state="$TMP_ROOT/reused-holder/state"
-  mkdir -p "$state"
-  start=$(proc_eval sandbox "fm_proc_start_epoch $LIVE_PID") \
-    || fail "sandbox: no start time for a live process"
-  printf '%s\n' "$LIVE_PID" > "$state/.lock"
-  perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' "$start" "$state/.lock" \
-    || fail "could not set the lock's mtime"
-  if out=$(in_harness sandbox 'FM_STATE_OVERRIDE="$1" bash "$ROOT/bin/fm-lock.sh"' "$state" 2>&1); then
-    fail "sandbox: a holder that started in the lock's own second lost its lock: $out"
-  fi
-  assert_equals "$LIVE_PID" "$(head -n 1 "$state/.lock")" "sandbox: a same-second holder's lock was rewritten"
-  perl -e 'utime $ARGV[0], $ARGV[0], $ARGV[1] or exit 1' "$((start - 1))" "$state/.lock" \
-    || fail "could not set the lock's mtime"
-  out=$(in_harness sandbox 'FM_STATE_OVERRIDE="$1" bash "$ROOT/bin/fm-lock.sh" && echo "harness=$PPID"' "$state" 2>&1) \
-    || fail "sandbox: a holder that started after the lock was written kept it: $out"
-  assert_equals "${out##*harness=}" "$(head -n 1 "$state/.lock")" "sandbox: the reused pid's lock was not taken"
-  pass "session-lock: a holder that started after the lock was written is stale inside the sandbox"
+  pass "session-lock: an unidentifiable live holder is refused inside the sandbox, and an identified non-harness holder is stale on both sides"
 }
 
 # Inside the sandbox a watcher started by an earlier command cannot be
@@ -384,5 +371,4 @@ test_session_lock_inside_the_sandbox
 test_harness_detection_inside_the_sandbox
 test_watcher_identity_crosses_the_sandbox
 test_unrecognizable_live_holder_is_refused_in_the_sandbox
-test_holder_started_after_the_lock_was_written_is_stale_in_the_sandbox
 test_watcher_stop_reports_a_refused_signal

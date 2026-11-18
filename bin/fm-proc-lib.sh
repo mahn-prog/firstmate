@@ -56,7 +56,7 @@ printf("%d %d %06d %s\n", $ppid, $sec, $usec, $comm);
 FM_PROC_PPID='' FM_PROC_START='' FM_PROC_COMM=''
 fm_proc_read() {
   local pid=$1 proc_root line rest comm
-  local -a fields
+  local -a proc_fields
   FM_PROC_PPID='' FM_PROC_START='' FM_PROC_COMM=''
   case "$pid" in ''|*[!0-9]*|0) return 2 ;; esac
   proc_root=${FM_PROC_ROOT_OVERRIDE:-/proc}
@@ -66,10 +66,10 @@ fm_proc_read() {
     rest=${line##*)}
     comm=${line#*(}
     comm=${comm%)*}
-    read -r -a fields <<< "$rest"
-    [ "${#fields[@]}" -ge 20 ] || return 2
-    FM_PROC_PPID=${fields[1]}
-    FM_PROC_START=${fields[19]}
+    read -r -a proc_fields <<< "$rest"
+    [ "${#proc_fields[@]}" -ge 20 ] || return 2
+    FM_PROC_PPID=${proc_fields[1]}
+    FM_PROC_START=${proc_fields[19]}
     FM_PROC_COMM=$comm
     return 0
   fi
@@ -230,7 +230,10 @@ fm_pid_identity() {
   # narrow-COLUMNS hook, where a truncated command would likewise reject a live
   # watcher (issue #799). This mirrors fm_pending_reply_pid_identity, which pins the
   # same width for the same reason.
-  out=$(COLUMNS=10000 LC_ALL=C ps -p "$pid" -o lstart= -o command= 2>/dev/null) || return 1
+  # Pin TZ=UTC0 because lstart renders in local time: a supervision engine whose
+  # launcher exports another TZ than the host's hooks would otherwise read the
+  # host's grant owner as dead, discard the grant, and refuse its drain.
+  out=$(COLUMNS=10000 LC_ALL=C TZ=UTC0 ps -p "$pid" -o lstart= -o command= 2>/dev/null) || return 1
   [ -n "$out" ] || return 1
   printf '%s\n' "$out" | sed 's/^[[:space:]]*//'
 }
