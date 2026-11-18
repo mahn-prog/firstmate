@@ -133,6 +133,12 @@ assert_lean_common() {  # <probe-output> <label>
   assert_equals "$EXPECTED_DISALLOWED" "$(probe_value_after "$seen" --disallowedTools)" \
     "$label: launch must remove exactly the 19 unused built-in tools"
   settings=$(probe_value_after "$seen" --settings)
+  # A secondmate passes --settings a file path (its busy hooks share that
+  # file); a ship or scout passes the JSON inline.
+  case "$settings" in
+    \{*) ;;
+    *) settings=$(cat "$settings") || fail "$label: the --settings file could not be read" ;;
+  esac
   printf '%s' "$settings" | jq -e '
       .feedbackDrafts == "off"
       and .attribution == {"commit":"","pr":"","sessionUrl":false}
@@ -280,7 +286,8 @@ test_secondmate_launch_lean_but_keeps_personal_file() {
     assert_equals "CONNECTORS=false" "$(printf '%s\n' "$seen" | head -1)" \
       "secondmate, allowlist $setting: claude.ai connectors must be off"
     assert_lean_common "$seen" "secondmate, allowlist $setting"
-    settings=$(probe_value_after "$seen" --settings)
+    settings=$(cat "$(probe_value_after "$seen" --settings)") \
+      || fail "secondmate, allowlist $setting: the --settings file could not be read"
     printf '%s' "$settings" | jq -e 'has("claudeMdExcludes") | not' >/dev/null \
       || fail "secondmate, allowlist $setting: a second mate must keep loading the personal CLAUDE.md and its home's AGENTS.md: $settings"
     probe_has_arg "$seen" --append-system-prompt \

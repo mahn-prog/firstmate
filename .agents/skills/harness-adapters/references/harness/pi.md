@@ -34,12 +34,12 @@ The router's Detection section owns how launch markers and ancestry select betwe
 Keep the instructions as one positional argument.
 Multiple positional arguments become separate queued messages; the spawn template already preserves the one-argument shape.
 
-A project trust dialog (`Trust project folder?`) appears only when the start directory or an ancestor carries a trust-requiring project resource, such as `.pi/` settings or extensions or a project `.agents/skills` directory, and no decision covers it.
+A project trust dialog (`Trust project folder?`) appears only when the start directory or an ancestor carries a trust-requiring project resource, such as `.pi/` settings or extensions or a project `.agents/skills` directory, and no decision covers it; that includes a clean worktree and a freshly seeded secondmate home.
 Pi applies the first match of `--approve`/`--no-approve`, a `project_trust` extension, the closest saved decision for the directory or any ancestor in the agent directory's `trust.json` (`~/.pi/agent/trust.json`, or the pinned root's under a worker account pin), then the `defaultProjectTrust` setting, which defaults to asking.
 A saved decision for a pool root therefore covers every slot beneath it, and such a spawn shows no dialog.
 The dialog lists `Trust` first, then `Trust parent folder (<parent>)`, `Trust (this session only)`, `Do not trust`, and `Do not trust (this session only)`.
 Accept it with Enter, which selects `Trust` and saves that exact directory, and verify the instructions begin processing.
-Firstmate never passes `--approve`.
+Firstmate passes `--approve` only on an unattended seeded-secondmate launch, for that session only; `../../../bin/fm-spawn.sh --help` owns the capability-gated mechanics, and [runtime verification](../../../../../docs/verification/runtime-backends.md#pi-seeded-secondmate-project-trust) owns the regression evidence.
 
 Pi 1.1.0 also adds `--session-id`, `--fork`, `--offline`, `--no-mcp`, and the `pi auth` subcommand; none is part of a Firstmate launch, and `../../../bin/fm-worker-account-lib.sh` owns the use of `pi auth check`.
 
@@ -57,6 +57,7 @@ A launch with no `--model` uses Pi's own `defaultProvider` and `defaultModel` se
 `../../../bin/fm-spawn.sh` keeps the worker turn-end extension in `state/`, outside the worktree, because project-local extension files worsen the trust gate and pollute the project.
 The extension listens for Pi's `turn_end` event, not `agent_end`, so supervision is notified after each completed turn rather than only when the whole run exits.
 Native-harness progress uses the separate generation-bound marker owned by `../../../bin/fm-busy-event.sh`; it never fabricates Pi turn completion.
+Optional foreground model-stream observation is version-gated separately; `../../../docs/configuration.md` (Environment variables) owns activation and `../../../docs/verification/runtime-backends.md` (Pi worker model-stream observation) owns the real-Pi evidence.
 Pi sets `PI_CODING_AGENT=true` for its children as its harness-detection marker.
 
 ## Primary integration
@@ -73,6 +74,7 @@ Native-harness adapters can discover the same guarded FirstMate tools and operat
 The tool result and clean-exit fallback are owned by `../../../docs/supervision-protocols/pi.md`.
 `../../../bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both extensions and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.
 
-When a secondmate is launched on Pi or Pi-signed, `../../../bin/fm-spawn.sh --secondmate` launches the selected executable with both `-e .pi/extensions/fm-primary-turnend-guard.ts` and `-e .pi/extensions/fm-primary-pi-watch.ts`.
-Both files already exist in the secondmate home's git worktree.
+When a secondmate is launched on Pi or Pi-signed, `../../../bin/fm-spawn.sh --secondmate` launches the selected executable with `-e .pi/extensions/fm-primary-turnend-guard.ts`, `-e .pi/extensions/fm-primary-pi-watch.ts`, and `-e` of the parent home's `state/<id>.pi-ext.ts` busy extension.
+Both primary files already exist in the secondmate home's git worktree.
+The busy extension lives outside that home, so Pi's project-trust gate does not see it, and its turn-end handler does not touch the parent's turn-ended marker.
 The PreToolUse-equivalent watcher-arm seatbelt returns `{block: true}` from the `tool_call` event.
