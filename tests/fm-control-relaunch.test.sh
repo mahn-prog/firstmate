@@ -1310,7 +1310,9 @@ test_claude_exclude_tools_follow_the_relaunch() {
   printf claude > "$dir/fake/command"
   out=$(run_control "$dir" "$id" relaunch --note "exclusions removed"); rc=$?
   expect_code 0 "$rc" "a Claude relaunch after the file is removed should succeed"$'\n'"$out"
-  assert_not_contains "$(cat "$dir/fake/literal")" "--disallowedTools" \
+  # The lean-start launch always carries its own unquoted --disallowedTools
+  # list; an absent file must add no quoted exclusion list beside it.
+  assert_not_contains "$(cat "$dir/fake/literal")" "--disallowedTools '" \
     "a relaunch without the file must launch with no exclusions"
   pass "fm-control relaunch: a Claude replacement keeps the home's tool exclusions"
 }
